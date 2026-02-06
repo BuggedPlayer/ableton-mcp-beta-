@@ -373,20 +373,37 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
             logger.warning("Make sure the Ableton Remote Script is running")
 
-        # Auto-connect M4L bridge with retries (device may need time to init)
-        m4l_connected = False
-        for m4l_attempt in range(1, 6):
-            try:
-                m4l = get_m4l_connection()
-                logger.info("M4L bridge connected on startup")
-                m4l_connected = True
-                break
-            except Exception as e:
-                logger.info(f"M4L bridge attempt {m4l_attempt}/5: {str(e)}")
-                if m4l_attempt < 5:
-                    time.sleep(2)
-        if not m4l_connected:
-            logger.warning("M4L bridge not available — will retry when needed")
+        # Auto-connect M4L bridge in background (device may need time to init)
+        def _m4l_auto_connect():
+            """Background thread: retry M4L bridge connection until it works."""
+            global _m4l_connection
+            for attempt in range(1, 16):  # 15 attempts over ~30s
+                try:
+                    # Set up sockets if needed
+                    if _m4l_connection is None or not _m4l_connection._connected:
+                        _m4l_connection = M4LConnection()
+                        if not _m4l_connection.connect():
+                            logger.info(f"M4L auto-connect {attempt}/15: socket bind failed")
+                            _m4l_connection = None
+                            time.sleep(2)
+                            continue
+
+                    # Try a quick ping with short timeout
+                    _m4l_connection.recv_sock.settimeout(2.0)
+                    if _m4l_connection.ping():
+                        logger.info(f"M4L bridge auto-connected on attempt {attempt}")
+                        # Prime the dashboard cache
+                        _m4l_ping_cache["result"] = True
+                        _m4l_ping_cache["timestamp"] = time.time()
+                        return
+                    else:
+                        logger.info(f"M4L auto-connect {attempt}/15: ping failed, retrying...")
+                except Exception as e:
+                    logger.info(f"M4L auto-connect {attempt}/15: {str(e)}")
+                time.sleep(2)
+            logger.warning("M4L bridge not available after 15 attempts — will retry when needed")
+
+        threading.Thread(target=_m4l_auto_connect, daemon=True, name="m4l-auto-connect").start()
 
         # Start web dashboard on background thread
         try:
