@@ -248,8 +248,10 @@ class M4LConnection:
                 ("s", request_id),
             ])
         elif command_type == "batch_set_hidden_params":
-            params_json = json.dumps(params["parameters"])
-            params_b64 = base64.b64encode(params_json.encode("utf-8")).decode("ascii")
+            # Use compact JSON (no spaces) + URL-safe base64 without padding.
+            # Max's OSC/symbol handling mangles +, /, and = characters.
+            params_json = json.dumps(params["parameters"], separators=(",", ":"))
+            params_b64 = base64.urlsafe_b64encode(params_json.encode("utf-8")).decode("ascii").rstrip("=")
             return self._build_osc_message("/batch_set_hidden_params", [
                 ("i", params["track_index"]),
                 ("i", params["device_index"]),
@@ -269,6 +271,15 @@ class M4LConnection:
         request_id = str(uuid.uuid4())[:8]
         osc = self._build_osc_packet(command_type, params, request_id)
 
+        # Batch operations use chunked processing in the M4L device with
+        # delays between chunks, so they need a longer timeout.
+        if command_type == "batch_set_hidden_params":
+            param_count = len(params.get("parameters", []))
+            # ~150ms per param (chunk delay + LOM overhead), minimum 10s
+            timeout = max(10.0, param_count * 0.15)
+        else:
+            timeout = 5.0
+
         max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             if not self._connected:
@@ -283,7 +294,7 @@ class M4LConnection:
             except (BlockingIOError, OSError):
                 pass
             self.recv_sock.setblocking(True)
-            self.recv_sock.settimeout(5.0)
+            self.recv_sock.settimeout(timeout)
 
             try:
                 self.send_sock.sendto(osc, (self.send_host, self.send_port))
@@ -941,6 +952,48 @@ def get_m4l_connection() -> M4LConnection:
 
     logger.info("M4L bridge connection established and verified.")
     return _m4l_connection
+
+
+def _m4l_batch_set_params(
+    m4l: M4LConnection,
+    track_index: int,
+    device_index: int,
+    parameters: List[Dict],
+) -> Dict[str, Any]:
+    """Set multiple hidden parameters by sending individual set_hidden_param
+    commands sequentially.  More reliable than the base64-encoded batch OSC
+    approach which can fail with longer payloads in Max.
+
+    Returns a dict with keys: params_set, params_failed, total_requested, errors.
+    """
+    ok = 0
+    failed = 0
+    errors: List[str] = []
+    for p in parameters:
+        try:
+            result = m4l.send_command("set_hidden_param", {
+                "track_index": track_index,
+                "device_index": device_index,
+                "parameter_index": int(p["index"]),
+                "value": float(p["value"]),
+            })
+            if result.get("status") == "success":
+                ok += 1
+            else:
+                failed += 1
+                errors.append(f"[{p['index']}]: {result.get('message', '?')}")
+        except Exception as e:
+            failed += 1
+            errors.append(f"[{p['index']}]: {str(e)}")
+        # Small delay to let Ableton breathe when setting many params
+        if len(parameters) > 6:
+            time.sleep(0.05)
+    return {
+        "params_set": ok,
+        "params_failed": failed,
+        "total_requested": ok + failed,
+        "errors": errors,
+    }
 
 
 # --- Input validation helpers ---
@@ -3050,26 +3103,57 @@ def batch_set_hidden_parameters(
         _validate_index(device_index, "device_index")
         if not isinstance(parameters, list) or len(parameters) == 0:
             raise ValueError("parameters must be a non-empty list.")
-        for i, p in enumerate(parameters):
+
+        # Filter out parameter index 0 ("Device On") to prevent accidentally
+        # disabling the device — a common source of issues.
+        safe_params = [p for p in parameters if int(p.get("index", 0)) != 0]
+        skipped = len(parameters) - len(safe_params)
+
+        for i, p in enumerate(safe_params):
             if not isinstance(p, dict):
                 raise ValueError(f"Parameter at index {i} must be a dictionary.")
             if "index" not in p or "value" not in p:
                 raise ValueError(f"Parameter at index {i} must have 'index' and 'value' keys.")
 
-        m4l = get_m4l_connection()
-        result = m4l.send_command("batch_set_hidden_params", {
-            "track_index": track_index,
-            "device_index": device_index,
-            "parameters": parameters
-        })
+        if len(safe_params) == 0:
+            return "No settable parameters after filtering (parameter 0 'Device On' is excluded)."
 
-        if result.get("status") == "success":
-            data = result.get("result", {})
-            total = data.get("total_requested", 0)
-            ok = data.get("params_set", 0)
-            failed = data.get("params_failed", 0)
-            return f"Batch set complete: {ok}/{total} parameters set successfully ({failed} failed)."
-        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+        # Send individual set_hidden_param commands with a small delay between
+        # each to avoid overwhelming Ableton.  This is more reliable than the
+        # base64-encoded batch OSC approach which can fail with long payloads.
+        m4l = get_m4l_connection()
+        ok_count = 0
+        fail_count = 0
+        errors = []
+
+        for p in safe_params:
+            try:
+                result = m4l.send_command("set_hidden_param", {
+                    "track_index": track_index,
+                    "device_index": device_index,
+                    "parameter_index": int(p["index"]),
+                    "value": float(p["value"])
+                })
+                if result.get("status") == "success":
+                    ok_count += 1
+                else:
+                    fail_count += 1
+                    errors.append(f"[{p['index']}]: {result.get('message', '?')}")
+            except Exception as e:
+                fail_count += 1
+                errors.append(f"[{p['index']}]: {str(e)}")
+
+            # Small delay between params to let Ableton breathe
+            if len(safe_params) > 6:
+                time.sleep(0.05)
+
+        total = ok_count + fail_count
+        msg = f"Batch set complete: {ok_count}/{total} parameters set successfully ({fail_count} failed)."
+        if skipped:
+            msg += f" ({skipped} skipped: 'Device On' excluded for safety.)"
+        if errors:
+            msg += f" Errors: {'; '.join(errors[:5])}"
+        return msg
     except ValueError as e:
         return f"Invalid input: {e}"
     except ConnectionError as e:
@@ -3179,22 +3263,14 @@ def restore_device_snapshot(
             return "Snapshot contains no parameters to restore."
 
         m4l = get_m4l_connection()
-        result = m4l.send_command("batch_set_hidden_params", {
-            "track_index": target_track,
-            "device_index": target_device,
-            "parameters": params_to_set
-        })
-
-        if result.get("status") == "success":
-            data = result.get("result", {})
-            ok = data.get("params_set", 0)
-            failed = data.get("params_failed", 0)
-            return (
-                f"Restored snapshot '{snapshot['name']}' (ID: {snapshot_id})\n"
-                f"Target: track {target_track}, device {target_device}\n"
-                f"Parameters restored: {ok}/{len(params_to_set)} ({failed} failed)"
-            )
-        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+        data = _m4l_batch_set_params(m4l, target_track, target_device, params_to_set)
+        ok = data["params_set"]
+        failed = data["params_failed"]
+        return (
+            f"Restored snapshot '{snapshot['name']}' (ID: {snapshot_id})\n"
+            f"Target: track {target_track}, device {target_device}\n"
+            f"Parameters restored: {ok}/{len(params_to_set)} ({failed} failed)"
+        )
     except ConnectionError as e:
         return f"M4L bridge not available: {e}"
     except Exception as e:
@@ -3408,16 +3484,9 @@ def restore_group_snapshot(ctx: Context, group_id: str) -> str:
             if not params_to_set:
                 continue
 
-            result = m4l.send_command("batch_set_hidden_params", {
-                "track_index": snap["track_index"],
-                "device_index": snap["device_index"],
-                "parameters": params_to_set
-            })
-
-            if result.get("status") == "success":
-                data = result.get("result", {})
-                total_params += data.get("params_set", 0)
-                total_failed += data.get("params_failed", 0)
+            data = _m4l_batch_set_params(m4l, snap["track_index"], snap["device_index"], params_to_set)
+            total_params += data["params_set"]
+            total_failed += data["params_failed"]
             total_devices += 1
 
         return (
@@ -3565,22 +3634,14 @@ def morph_between_snapshots(
             return "No matching parameters found between the two snapshots."
 
         m4l = get_m4l_connection()
-        result = m4l.send_command("batch_set_hidden_params", {
-            "track_index": target_track,
-            "device_index": target_device,
-            "parameters": params_to_set
-        })
-
-        if result.get("status") == "success":
-            data = result.get("result", {})
-            ok = data.get("params_set", 0)
-            return (
+        data = _m4l_batch_set_params(m4l, target_track, target_device, params_to_set)
+        ok = data["params_set"]
+        return (
                 f"Morph at position {position:.2f} "
                 f"('{snap_a.get('name', snapshot_a_id)}' -> '{snap_b.get('name', snapshot_b_id)}')\n"
                 f"Interpolated {ok} parameters, skipped {skipped} (unmatched)\n"
                 f"Target: track {target_track}, device {target_device}"
             )
-        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
     except ValueError as e:
         return f"Invalid input: {e}"
     except ConnectionError as e:
@@ -3693,15 +3754,9 @@ def set_macro_value(ctx: Context, macro_id: str, value: float) -> str:
         total_failed = 0
 
         for (ti, di), params in grouped.items():
-            result = m4l.send_command("batch_set_hidden_params", {
-                "track_index": ti,
-                "device_index": di,
-                "parameters": params
-            })
-            if result.get("status") == "success":
-                data = result.get("result", {})
-                total_set += data.get("params_set", 0)
-                total_failed += data.get("params_failed", 0)
+            data = _m4l_batch_set_params(m4l, ti, di, params)
+            total_set += data["params_set"]
+            total_failed += data["params_failed"]
 
         return (
             f"Macro '{macro['name']}' set to {value:.2f}\n"

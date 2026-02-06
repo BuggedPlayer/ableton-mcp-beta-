@@ -135,6 +135,20 @@ function handleSetHiddenParam(args) {
     sendResult(result, requestId);
 }
 
+// ---------------------------------------------------------------------------
+// Batch set: chunked processing to avoid freezing Ableton
+//
+// Instead of setting all parameters in one synchronous loop (which can
+// crash Ableton when there are 50-90+ params), we process them in small
+// chunks with a deferred callback between each chunk.  This yields control
+// back to Ableton's main thread so it can update the UI and stay alive.
+// ---------------------------------------------------------------------------
+var BATCH_CHUNK_SIZE = 6;     // params per chunk — keep small to stay safe
+var BATCH_CHUNK_DELAY = 50;   // ms between chunks
+
+// Persistent state for the current batch operation
+var _batchState = null;
+
 function handleBatchSetHiddenParams(args) {
     // args: [track_index (int), device_index (int), params_json_b64 (string), request_id (string)]
     if (args.length < 4) {
@@ -143,8 +157,18 @@ function handleBatchSetHiddenParams(args) {
     }
     var trackIdx  = parseInt(args[0]);
     var deviceIdx = parseInt(args[1]);
-    var paramsB64 = args[2].toString();
-    var requestId = args[3].toString();
+
+    // Max's udpreceive may split long OSC string arguments across multiple
+    // args.  Reassemble: everything between the two int args and the last
+    // arg (request_id) is the base64 payload.
+    var requestId = args[args.length - 1].toString();
+    var b64Parts = [];
+    for (var a = 2; a < args.length - 1; a++) {
+        b64Parts.push(args[a].toString());
+    }
+    var paramsB64 = b64Parts.join("");
+
+    post("batch_set: args.length=" + args.length + " b64len=" + paramsB64.length + "\n");
 
     // Decode the base64-encoded JSON parameter array
     var paramsJson;
@@ -154,6 +178,7 @@ function handleBatchSetHiddenParams(args) {
         sendError("Failed to decode params_json_b64: " + e.toString(), requestId);
         return;
     }
+    post("batch_set: decoded json len=" + paramsJson.length + "\n");
 
     var paramsList;
     try {
@@ -176,19 +201,69 @@ function handleBatchSetHiddenParams(args) {
         return;
     }
 
-    var results = [];
-    var errorCount = 0;
-
+    // Filter out parameter index 0 ("Device On") to avoid accidentally
+    // disabling the device — a common cause of unexpected behavior.
+    var safeParams = [];
+    var skippedDeviceOn = false;
     for (var i = 0; i < paramsList.length; i++) {
-        var paramIdx = parseInt(paramsList[i].index);
-        var value    = parseFloat(paramsList[i].value);
+        if (parseInt(paramsList[i].index) === 0) {
+            skippedDeviceOn = true;
+            continue;
+        }
+        safeParams.push(paramsList[i]);
+    }
 
-        var paramPath = devicePath + " parameters " + paramIdx;
-        var paramApi  = new LiveAPI(null, paramPath);
+    if (safeParams.length === 0) {
+        sendResult({
+            params_set: 0,
+            params_failed: 0,
+            total_requested: paramsList.length,
+            skipped_device_on: skippedDeviceOn,
+            message: "No settable parameters after filtering."
+        }, requestId);
+        return;
+    }
+
+    // Initialize chunked batch state
+    _batchState = {
+        devicePath: devicePath,
+        paramsList: safeParams,
+        requestId:  requestId,
+        cursor:     0,
+        okCount:    0,
+        failCount:  0,
+        errors:     [],
+        skippedDeviceOn: skippedDeviceOn,
+        totalRequested:  paramsList.length
+    };
+
+    // Start processing the first chunk
+    _batchProcessNextChunk();
+}
+
+function _batchProcessNextChunk() {
+    if (!_batchState) return;
+
+    var s = _batchState;
+    var end = Math.min(s.cursor + BATCH_CHUNK_SIZE, s.paramsList.length);
+
+    for (var i = s.cursor; i < end; i++) {
+        var paramIdx = parseInt(s.paramsList[i].index);
+        var value    = parseFloat(s.paramsList[i].value);
+
+        var paramPath = s.devicePath + " parameters " + paramIdx;
+        var paramApi;
+        try {
+            paramApi = new LiveAPI(null, paramPath);
+        } catch (e) {
+            s.errors.push({ index: paramIdx, error: "LiveAPI error: " + e.toString() });
+            s.failCount++;
+            continue;
+        }
 
         if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
-            results.push({ index: paramIdx, error: "not found" });
-            errorCount++;
+            s.errors.push({ index: paramIdx, error: "not found" });
+            s.failCount++;
             continue;
         }
 
@@ -197,24 +272,36 @@ function handleBatchSetHiddenParams(args) {
             var maxVal  = parseFloat(paramApi.get("max"));
             var clamped = Math.max(minVal, Math.min(maxVal, value));
             paramApi.set("value", clamped);
-
-            results.push({
-                index: paramIdx,
-                name: paramApi.get("name").toString(),
-                actual_value: parseFloat(paramApi.get("value"))
-            });
+            s.okCount++;
         } catch (e) {
-            results.push({ index: paramIdx, error: e.toString() });
-            errorCount++;
+            s.errors.push({ index: paramIdx, error: e.toString() });
+            s.failCount++;
         }
     }
 
-    sendResult({
-        params_set: results.length - errorCount,
-        params_failed: errorCount,
-        total_requested: paramsList.length,
-        results: results
-    }, requestId);
+    s.cursor = end;
+
+    if (s.cursor >= s.paramsList.length) {
+        // All chunks done — send the response
+        var result = {
+            params_set:      s.okCount,
+            params_failed:   s.failCount,
+            total_requested: s.totalRequested
+        };
+        if (s.skippedDeviceOn) {
+            result.skipped_device_on = true;
+        }
+        // Only include error details (not full results) to keep response small
+        if (s.errors.length > 0) {
+            result.errors = s.errors;
+        }
+        sendResult(result, s.requestId);
+        _batchState = null;
+    } else {
+        // Schedule the next chunk after a short delay
+        var t = new Task(_batchProcessNextChunk);
+        t.schedule(BATCH_CHUNK_DELAY);
+    }
 }
 
 function handleCheckDashboard(args) {
@@ -290,6 +377,9 @@ function _base64decode(str) {
     for (var c = 0; c < _b64chars.length; c++) {
         lookup[_b64chars.charAt(c)] = c;
     }
+    // Also accept URL-safe base64 variants (- instead of +, _ instead of /)
+    lookup["-"] = 62;
+    lookup["_"] = 63;
     str = str.replace(/=/g, "");
     var result = "";
     var i = 0;

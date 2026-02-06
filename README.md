@@ -274,7 +274,7 @@ The MCP server sends native OSC messages to port **9878** (M4L `udpreceive`). Th
 | `/discover_params` | `track_index, device_index, request_id` | Enumerate all LOM parameters |
 | `/get_hidden_params` | `track_index, device_index, request_id` | Get hidden parameter details |
 | `/set_hidden_param` | `track_index, device_index, param_index, value, request_id` | Set a parameter by LOM index |
-| `/batch_set_hidden_params` | `track_index, device_index, params_b64, request_id` | Set multiple params at once. `params_b64` is base64-encoded JSON: `[{index, value}, ...]` |
+| `/batch_set_hidden_params` | `track_index, device_index, params_b64, request_id` | Set multiple params at once (chunked). `params_b64` is URL-safe base64-encoded JSON: `[{index, value}, ...]`. Note: v1.8.2+ server uses sequential `/set_hidden_param` calls instead for reliability. |
 | `/check_dashboard` | `request_id` | Returns the dashboard URL and bridge version |
 
 **Why base64?** Max treats `{` and `}` as special characters in its messaging system, so JSON responses are base64-encoded before being sent through `outlet()`.
@@ -359,7 +359,26 @@ Live web dashboard at `http://127.0.0.1:9880` showing connection status, tool ca
 ### Auto M4L Bridge Connection
 The server now automatically connects to the M4L bridge device on startup, right after connecting to Ableton. No need to wait for a tool call to trigger the connection — the dashboard shows M4L status immediately.
 
-**Core primitive**: `batch_set_hidden_parameters` sets 100+ params in a single M4L round-trip instead of 100 separate calls.
+**Core primitive**: `batch_set_hidden_parameters` sets multiple params reliably via sequential `set_hidden_param` UDP calls with automatic pacing.
+
+### v1.8.2 — Batch Hidden Parameter Crash Fix
+
+- **Fixed**: `batch_set_hidden_parameters` was crashing Ableton when setting more than 2 parameters. Root cause: Max's OSC/UDP handling corrupted long base64-encoded payloads.
+- **Server fix**: Replaced single base64-encoded batch OSC message with sequential individual `set_hidden_param` calls via `_m4l_batch_set_params()` helper. Includes 50ms inter-param delay for large batches.
+- **M4L fix**: Added chunked processing (6 params/chunk, 50ms delay) using Max's `Task` scheduler, URL-safe base64 decode, debug logging.
+- **Safety**: Both server and M4L bridge filter out parameter index 0 ("Device On") to prevent accidentally disabling devices.
+- **Dynamic timeout**: M4L `send_command` timeout scales with parameter count (~150ms/param, min 10s) instead of fixed 5s.
+- Updated all internal callers: `restore_device_snapshot`, `restore_group_snapshot`, `morph_between_snapshots`, `set_macro_value`.
+
+### v1.8.1 — Stability & Hidden Parameter Crash Fix
+
+- **Fixed**: `set_device_hidden_parameter` no longer crashes Ableton — added try-catch around LOM parameter set/get calls in the M4L bridge JS (matching the batch handler pattern)
+- **Fixed**: Proper `socket.shutdown()` before `close()` on disconnect — prevents socket hangs and FD leaks
+- **Fixed**: Buffer overflow now notifies client with error message before disconnecting (was silent drop)
+- **Fixed**: UTF-8 decode uses `errors='replace'` — invalid bytes no longer crash the client handler
+- **Fixed**: M4L response `request_id` verification — warns on mismatch to detect stale responses
+- **Fixed**: Server version fallback updated to 1.8.1
+- **Improved**: Thread join timeout on disconnect increased from 1s to 3s for cleaner shutdown
 
 ### v1.8.1 — Stability & Hidden Parameter Crash Fix
 
@@ -412,7 +431,7 @@ Add to `claude_desktop_config.json`:
     "mcpServers": {
         "AbletonMCP-Beta": {
             "command": "uvx",
-            "args": ["path/to/dist/ableton_mcp_beta-1.8.1-py3-none-any.whl"]
+            "args": ["path/to/dist/ableton_mcp_beta-1.8.2-py3-none-any.whl"]
         }
     }
 }
