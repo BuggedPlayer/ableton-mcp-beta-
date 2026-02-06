@@ -35,15 +35,20 @@ A Python server that implements the Model Context Protocol and bridges between t
 
 The server exposes **81 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
 
+**Startup sequence:**
+1. Connect to Ableton Remote Script (TCP port 9877)
+2. Auto-connect to M4L bridge (UDP ports 9878/9879) — no need to wait for a tool call
+3. Start the web status dashboard (HTTP port 9880)
+
 ### 3. Web Status Dashboard (`http://127.0.0.1:9880`)
-A live web dashboard running on a background thread alongside the MCP server. Auto-refreshes every 3 seconds.
+A live web dashboard running on a background daemon thread alongside the MCP server. Built with starlette + uvicorn (already installed as transitive deps of `mcp[cli]`, zero new dependencies). Auto-refreshes every 3 seconds.
 
 - **Status cards**: Server version, uptime, Ableton connection, M4L bridge status, snapshot/macro/param map counts, total tool calls
 - **Most Used Tools**: Bar chart of the top 10 most-called MCP tools
-- **Recent Tool Calls**: Table showing tool name, duration, arguments, and error status (last 50 calls)
-- **Server Log**: Real-time terminal-style log viewer showing all server log entries (last 200 lines, color-coded by level)
+- **Recent Tool Calls**: Table showing tool name, duration, arguments, and error status for the last 50 tool calls
+- **Server Log**: Real-time terminal-style log viewer with color-coded log levels (INFO, WARNING, ERROR) showing the last 200 server log entries — scroll to see the full boot sequence and all command activity
 - Configurable port via `ABLETON_MCP_DASHBOARD_PORT` environment variable (default: 9880)
-- Uses starlette + uvicorn (already installed as transitive deps of `mcp[cli]`, zero new dependencies)
+- Non-fatal: if the dashboard fails to start (e.g. port conflict), the MCP server continues normally
 
 ### 4. Max for Live Bridge (`M4L_Device/m4l_bridge.js`) *(optional)*
 A JavaScript file running inside a Max for Live `[js]` object. It provides deep Live Object Model (LOM) access to hidden/non-automatable device parameters that the standard Remote Script API cannot reach.
@@ -329,6 +334,12 @@ Capture two different device states as snapshots, then smoothly morph between th
 
 ### Device State Versioning & Undo
 Snapshot every device on your tracks, then rollback to any previous state. Group snapshots capture multiple tracks at once. Compare any two snapshots to see exactly what changed.
+
+### Web Status Dashboard
+Live web dashboard at `http://127.0.0.1:9880` showing connection status, tool call metrics, and a real-time server log. Runs automatically on startup — just open your browser.
+
+### Auto M4L Bridge Connection
+The server now automatically connects to the M4L bridge device on startup, right after connecting to Ableton. No need to wait for a tool call to trigger the connection — the dashboard shows M4L status immediately.
 
 **Core primitive**: `batch_set_hidden_parameters` sets 100+ params in a single M4L round-trip instead of 100 separate calls.
 

@@ -373,6 +373,13 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
             logger.warning("Make sure the Ableton Remote Script is running")
 
+        # Auto-connect M4L bridge after Ableton connects
+        try:
+            m4l = get_m4l_connection()
+            logger.info("M4L bridge connected on startup")
+        except Exception as e:
+            logger.info(f"M4L bridge not available on startup: {str(e)}")
+
         # Start web dashboard on background thread
         try:
             _start_dashboard_server()
