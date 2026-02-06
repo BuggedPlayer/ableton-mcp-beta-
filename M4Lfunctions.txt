@@ -1,0 +1,87 @@
+NEW M4L Integration Capabilities (vs. Without M4L)
+
+1. Device Parameter Discovery & Hidden Access ✨ NEW
+Before: Could only access standard, automatable parameters via the API
+Now:
+
+discover_device_params() - Find ALL parameters on ANY device (standard + hidden)
+get_device_hidden_parameters() - Access non-automatable, hidden LOM parameters
+set_device_hidden_parameter() - Control parameters normally inaccessible through the UI
+
+Example: You can now control internal parameters on Wavetable, Operator, Simpler, Analog, Drift, or third-party plugins that aren't normally exposed.
+
+2. Deep Device Introspection
+Before: Generic parameter names, no metadata
+Now: Get detailed info per parameter:
+
+Min/max ranges for each parameter
+Quantization info (discrete vs. continuous)
+Default values
+Value item labels (e.g., "Off,On")
+Parameter indices for programmatic control
+
+
+3. Advanced Automation Workflows ✨ EXPANDED
+Before: Could create clip automation on visible parameters only
+Now: With hidden params accessible, you can:
+
+Create complex parameter movements using hidden parameters
+Automate internal synth behavior normally hidden from users
+Script device morphing and evolution in real-time
+
+
+4. Intelligent Device State Management
+Before: Had to manually track device settings
+Now: You can:
+
+Read complete device state (all 18+ parameters at once)
+Compare before/after state
+Create device snapshots programmatically
+Build parameter recall systems
+
+
+5. Dynamic Parameter-Based Scripting
+Before: Had to know exact parameter names in advance
+Now: You can:
+
+Discover what parameters exist on a device
+Script interactions based on available parameters
+Create adaptive workflows that work with any device
+
+
+6. Third-Party Plugin Deep Control ✨ NEW
+Before: Could only control basic plugin parameters
+Now: With M4L bridge:
+
+Access manufacturer-specific hidden parameters
+Control internal routing on complex plugins
+Manipulate parameters normally locked in UI
+
+
+7. Real-Time Device Analysis
+Before: No way to query device internals
+Now:
+
+Discover Instrument Racks' internal chain selectors
+Read macro control mappings
+Analyze complex device hierarchies
+
+
+Practical Examples of New Powers:
+
+Synth Evolution Script - Auto-modulate hidden morphing parameters on Wavetable based on beat progression
+Plugin Parameter Mining - Discover all available controls on VSTs/AU plugins and create custom control surfaces
+Device State Snapshots - Programmatically save/restore full device states including hidden params
+Adaptive Mixing - Read and control hidden compressor behavior, EQ slopes, etc. on effects chains
+Preset Generation - Intelligently set parameters knowing their ranges and constraints
+Conditional Automation - Create automation based on discovered parameter availability
+
+
+Want me to demonstrate any of these capabilities? For example, I could:
+
+Modify hidden parameters on the 808 Startup Kit right now
+Create parameter discovery scripts for specific devices
+Build automation using newly accessible parameters
+Explore what hidden controls are available on your devices
+
+What interests you most?

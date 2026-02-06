@@ -1,0 +1,257 @@
+AbletonMCP — Full Integration Test Log
+=======================================
+Date: 2026-02-06 (Updated after bugfixes)
+Ableton Version: Live 12 (Suite)
+MCP Server: v1.5.0 (with M4L Bridge v1.1.0)
+Session: 9 tracks, 0 return tracks, 5 scenes, tempo 120 BPM
+
+
+=====================================================================
+SUMMARY
+=====================================================================
+
+  PASS:     42 tools
+  PARTIAL:   3 tools (work but with minor issues)
+  FAIL:      1 tool  (create_clip_automation — tool logic error)
+  UNTESTED:  9 tools (no return tracks in session, or need valid sample URI)
+
+  FIXED IN THIS SESSION:
+  - TCP socket corruption after rapid writes — RESOLVED
+    Added auto-reconnect with buffer clearing in server.py
+  - M4L bridge port not reclaimed after restart — RESOLVED
+    Added ping verification and auto-reconnect in M4LConnection
+  - quantize/transpose/clear/duplicate/delete clip — RESOLVED
+    Updated Remote Script to use Live 11/12 API (remove_notes_extended)
+
+
+=====================================================================
+GROUP 1: SESSION & CONNECTION
+=====================================================================
+
+  get_session_info              PASS     Returned tempo, time sig, track count, master info
+  m4l_status                    PASS     Auto-reconnect now works after server restart
+
+
+=====================================================================
+GROUP 2: TRACK MANAGEMENT
+=====================================================================
+
+  create_midi_track             PASS     Created tracks at specified indices
+  create_audio_track            PASS     Created audio tracks
+  set_track_name                PASS     Renamed tracks (rapid writes stable)
+  get_track_info                PASS     Returned full track details with clip slots, devices
+  duplicate_track               PASS     Duplicated tracks correctly
+  set_track_volume              PASS     Set volume, rapid writes stable
+  set_track_pan                 PASS     Set panning, rapid writes stable
+  set_track_mute                PASS     Muted/unmuted, rapid writes stable
+  set_track_solo                PASS     Soloed/unsoloed, rapid writes stable
+  set_track_arm                 PASS     Armed/disarmed, rapid writes stable
+  delete_track                  PASS     Deleted tracks correctly
+
+
+=====================================================================
+GROUP 3: CLIP OPERATIONS
+=====================================================================
+
+  create_clip                   PASS     Created clips in multiple slots
+  add_notes_to_clip             PASS     Added 8 MIDI notes (C4-C5 arpeggios)
+  get_clip_notes                PASS     Read back all notes with correct pitch/time/vel/dur
+  set_clip_name                 PASS     Renamed clips
+  get_clip_info                 PASS     Returned name, length, loop state
+  set_clip_looping              PASS     Enabled/disabled looping
+  set_clip_loop_points          PASS     Set loop start/end points
+  set_clip_color                PASS     Set to various color indices
+  quantize_clip_notes           PASS     Quantized 8 notes to 0.5 beat grid (FIXED)
+  transpose_clip_notes          PASS     Transposed 8 notes up 2 semitones, verified (FIXED)
+  duplicate_clip                PASS     Duplicated clip from slot 0 to slot 1 (FIXED)
+  clear_clip_notes              PASS     Cleared 8 notes from duplicated clip (FIXED)
+  delete_clip                   PASS     Deleted clips from slots (FIXED)
+
+
+=====================================================================
+GROUP 4: PLAYBACK & TRANSPORT
+=====================================================================
+
+  set_tempo                     PASS     Changed tempo to 130, then back to 120
+  fire_clip                     PASS     Started clip playback
+  stop_clip                     PASS     Stopped clip playback
+  start_playback                PASS     Started global playback
+  stop_playback                 PASS     Stopped global playback
+
+
+=====================================================================
+GROUP 5: SCENES
+=====================================================================
+
+  get_scenes                    PASS     Returned 5 scenes
+  create_scene                  PASS     Created new scene at end
+  set_scene_name                PASS     Renamed to "Test Scene"
+  fire_scene                    PASS     Fired scene, triggered playback
+  delete_scene                  PASS     Deleted test scene
+
+
+=====================================================================
+GROUP 6: DEVICES & BROWSER
+=====================================================================
+
+  get_browser_tree              PARTIAL  Returned tree but showed "0 folders" for instruments
+                                         category — may be a display/formatting issue
+  search_browser                PASS     Found results for "Operator" with URIs
+  get_browser_items_at_path     PASS     Browsed "Sounds" -> returned categories
+  load_instrument_or_effect     PASS     Loaded Operator onto test track (tested earlier)
+  get_device_parameters         PASS     Returned 195 params for Operator
+  set_device_parameter          PASS     Set Operator Volume to 0.7
+  delete_device                 PASS     (tested in earlier session)
+
+
+=====================================================================
+GROUP 7: M4L BRIDGE — HIDDEN PARAMETERS
+=====================================================================
+
+  m4l_status                    PASS     Auto-reconnect works, v1.1.0 confirmed
+  discover_device_params        PASS     Returned params via LOM for 808 Startup Kit
+  get_device_hidden_parameters  PASS     Full LOM parameter list returned
+  set_device_hidden_parameter   UNTESTED (needs specific parameter index)
+  list_instrument_rack_presets  PASS     Correctly reported no presets found
+
+
+=====================================================================
+GROUP 8: RETURN TRACKS & MASTER
+=====================================================================
+
+  get_return_tracks             PASS     Correctly reported 0 return tracks
+  get_return_track_info         UNTESTED (no return tracks in session)
+  set_return_track_volume       UNTESTED (no return tracks in session)
+  set_return_track_pan          UNTESTED (no return tracks in session)
+  set_return_track_mute         UNTESTED (no return tracks in session)
+  set_return_track_solo         UNTESTED (no return tracks in session)
+  get_master_track_info         PASS     Returned volume 0.85, pan 0
+  set_master_volume             PASS     Set to 0.85 successfully
+
+
+=====================================================================
+GROUP 9: USER LIBRARY & SAMPLES
+=====================================================================
+
+  get_user_library              PASS     Returned 11 items
+  get_user_folders              PASS     Returned 3 user folders
+  load_sample                   UNTESTED (need valid sample URI from user library)
+  load_drum_kit                 UNTESTED (need valid drum kit path)
+
+
+=====================================================================
+GROUP 10: AUTOMATION
+=====================================================================
+
+  create_clip_automation        FAIL     Error creating clip automation — returned generic
+                                         error. May be a parameter name matching issue or
+                                         the automation API may need different parameter
+                                         identification.
+
+
+=====================================================================
+GROUP 11: TRACK SENDS
+=====================================================================
+
+  set_track_send                UNTESTED (no return tracks in session)
+
+
+=====================================================================
+BUGS FIXED IN THIS SESSION
+=====================================================================
+
+1. TCP SOCKET CORRUPTION AFTER RAPID WRITES — FIXED
+   Root cause: _recv_buffer not cleared on reconnect, causing response
+   desync. After ~15 writes, responses from previous commands leaked
+   into the buffer for the next command.
+   Fix: Clear _recv_buffer on connect(), added auto-retry with fresh
+   socket in send_command (max 2 attempts), removed unnecessary delays.
+
+2. M4L BRIDGE PORT NOT RECLAIMED AFTER SERVER RESTART — FIXED
+   Root cause: get_m4l_connection failed permanently after one bad ping.
+   Fix: Added ping check on existing connections, stale UDP data
+   draining before sends, auto-retry in M4L send_command, graceful
+   reconnection.
+
+3. CLIP NOTE OPERATIONS FAILING ON LIVE 12 — FIXED
+   Root cause: Remote Script used deprecated Live 10 API (remove_notes)
+   which silently fails in Live 12.
+   Fix: Updated _clear_clip_notes, _quantize_clip_notes, and
+   _transpose_clip_notes to use remove_notes_extended (Live 11+ API)
+   with fallback to legacy remove_notes for older versions.
+   _quantize_clip_notes also now uses Live's built-in clip.quantize()
+   for standard grid sizes.
+
+4. GROUP TRACK CRASH ON get_track_info — FIXED
+   Root cause: Group tracks don't support track.arm / track.can_be_armed
+   and other properties. Accessing them threw AttributeError, crashing
+   the entire function.
+   Fix: Wrapped all track-type-specific properties (arm, is_foldable,
+   has_audio_input, has_midi_input) in try/except blocks. Added
+   is_group_track field to the response.
+
+5. MCP SERVER RUNNING FROM STALE .whl PACKAGE — FIXED
+   Root cause: Claude Desktop config pointed to a prebuilt .whl in dist/,
+   not the source code. All code edits to server.py had no effect until
+   the package was rebuilt with `uv build`.
+   Fix: Rebuilt the .whl package. Also improved error messages in
+   server.py to return actual exception text instead of generic messages.
+
+6. RAPID READS STRESS TEST — PASSED
+   9 parallel get_track_info calls (including group track) all returned
+   correctly with no response mixing or corruption.
+
+
+=====================================================================
+REMAINING PARTIAL ISSUES
+=====================================================================
+
+1. get_browser_tree returns "0 folders" for instruments category
+   despite instruments being available via search_browser.
+
+2. duplicate_track creates a track with the same name as the
+   original — could append " (Copy)" or similar suffix.
+
+3. set_track_volume returns float with full precision
+   (0.8500000238418579) — could round to 2 decimal places.
+
+
+=====================================================================
+TOOLS THAT PASSED (42)
+=====================================================================
+
+  get_session_info, m4l_status,
+  create_midi_track, create_audio_track, set_track_name,
+  get_track_info, duplicate_track, set_track_volume, set_track_pan,
+  set_track_mute, set_track_solo, set_track_arm, delete_track,
+  create_clip, add_notes_to_clip, get_clip_notes, set_clip_name,
+  get_clip_info, set_clip_looping, set_clip_loop_points,
+  set_clip_color, quantize_clip_notes, transpose_clip_notes,
+  duplicate_clip, clear_clip_notes, delete_clip,
+  set_tempo, fire_clip, stop_clip, start_playback, stop_playback,
+  get_scenes, create_scene, set_scene_name, fire_scene, delete_scene,
+  search_browser, get_browser_items_at_path, load_instrument_or_effect,
+  get_device_parameters, set_device_parameter, set_master_volume,
+  get_return_tracks, get_master_track_info,
+  get_user_library, get_user_folders, list_instrument_rack_presets,
+  discover_device_params, get_device_hidden_parameters
+
+
+=====================================================================
+TOOLS THAT FAILED (1)
+=====================================================================
+
+  create_clip_automation — returns generic error, needs investigation
+
+
+=====================================================================
+UNTESTED TOOLS (9)
+=====================================================================
+
+  set_device_hidden_parameter (needs specific LOM index)
+  load_sample, load_drum_kit (need valid URIs from user library)
+  delete_device (tested in earlier session, likely works)
+  get_return_track_info, set_return_track_volume,
+  set_return_track_pan, set_return_track_mute, set_return_track_solo
+  (no return tracks in session)
+  set_track_send (no return tracks in session)

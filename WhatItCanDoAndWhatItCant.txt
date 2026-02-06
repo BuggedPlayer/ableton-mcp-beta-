@@ -1,0 +1,136 @@
+AbletonMCP — Capabilities & Limitations Reference
+===================================================
+
+This document lists everything AbletonMCP can and cannot do,
+organized by feature area and version.
+
+
+SESSION & TRACK MANAGEMENT
+  - Get session info (tempo, time signature, track count)
+  - Get detailed track information
+  - Create MIDI and audio tracks
+  - Rename, delete, and duplicate tracks
+  - Set track volume, pan, mute, solo, and arm
+
+CLIP OPERATIONS
+  - Create MIDI clips with custom lengths
+  - Add notes with pitch, timing, velocity, and duration
+  - Read existing MIDI notes from clips
+  - Delete, duplicate, and rename clips
+  - Clear all notes from a clip
+  - Quantize notes to a grid
+  - Transpose notes by semitones
+  - Set clip looping, loop points, and color
+  - Fire (play) and stop clips
+
+PLAYBACK & TEMPO
+  - Start and stop playback
+  - Change tempo (BPM)
+  - Fire scenes (launch entire rows of clips)
+
+MIXING
+  - Adjust track volume, pan, mute, solo, arm
+  - Set send levels to return tracks
+  - Control return track volume, pan, mute, solo
+  - Control master track volume
+
+INSTRUMENTS & EFFECTS
+  - Load instruments and effects from Ableton's browser
+  - Search browser by name or category
+  - Browse categories, subcategories, and user library
+  - Load audio samples onto tracks
+  - Load drum kits into drum racks
+  - Delete devices from tracks
+
+DEVICE PARAMETERS
+  - View all public parameters for any device
+  - Adjust parameter values (filters, envelopes, LFOs, etc.)
+
+HIDDEN DEVICE PARAMETERS (requires M4L bridge)
+  - Access ALL parameters including hidden/non-automatable ones
+  - Works with any Ableton device (Operator, Wavetable, Simpler, Analog, Drift, etc.)
+  - Discover full LOM parameter tree with names, values, ranges
+  - Set hidden parameters by LOM index
+
+SCENES
+  - Get scene information
+  - Create, rename, and delete scenes
+  - Fire scenes to launch clips
+
+AUTOMATION
+  - Create basic clip automation for device parameters (Session View only)
+
+VST/AU PLUGIN WORKAROUND
+  - Cannot load VST/AU plugins directly (hard API limitation)
+  - Workaround: save VST/AU as Instrument Rack in User Library,
+    then use list_instrument_rack_presets() + load_instrument_or_effect()
+
+
+===================================================
+IMPLEMENTED FEATURES BY VERSION
+===================================================
+
+v1.1.0
+  - Read device parameters
+  - Adjust device parameters
+  - Access user sample library
+  - Load audio samples from browser
+  - Create clip automations
+  - Search browser
+
+v1.2.0
+  - Create audio tracks
+  - Delete clips
+  - Get MIDI notes from clips
+  - Delete devices
+  - Track volume, pan, mute, solo, arm controls
+  - Scene management (get, fire, create, rename)
+  - Return track management
+  - Track send levels
+
+v1.3.0
+  - Delete tracks and scenes
+  - Get detailed clip info
+  - Clear clip notes
+  - Duplicate clips and tracks
+  - Quantize and transpose clip notes
+
+v1.4.0
+  - Set clip looping and loop points
+  - Set clip color
+  - Return track pan, mute, solo
+  - Master track info and volume
+
+v1.5.0 — Max for Live Bridge
+  - M4L bridge device for deep LOM access via OSC/UDP
+  - Discover all device parameters (hidden + public)
+  - Get and set hidden/non-automatable parameters
+  - List user library Instrument Rack presets (VST workaround)
+  - Note: M4L tools require the AbletonMCP_Bridge device on any track
+
+
+===================================================
+REMAINING LIMITATIONS
+===================================================
+
+  - Cannot load VST/AU plugins directly (no API support)
+  - Cannot load samples from arbitrary filesystem paths (browser items only)
+  - Cannot create arrangement automation (Session View clips only)
+  - Cannot record audio or MIDI in real-time
+  - Cannot edit audio clips (warping, slicing, fades)
+  - Cannot work in Arrangement View (Session View only)
+  - Cannot set warp markers or clip envelopes
+  - Cannot access pre/post fader routing
+  - Cannot freeze or flatten tracks
+  - Cannot save, load, or export projects
+  - Cannot export audio or MIDI files
+  - User library returns URIs, not filesystem paths
+
+
+===================================================
+FUTURE IMPROVEMENTS
+===================================================
+
+  - Add support for drum rack pad sample loading
+  - Explore clip arrangement position control
+  - Build static parameter maps for common devices
