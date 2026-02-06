@@ -23,6 +23,7 @@ outlets = 1;
 function loadbang() {
     post("AbletonMCP Beta M4L Bridge v1.1.0 starting...\n");
     post("Listening for OSC commands on port 9878.\n");
+    post("Dashboard: http://127.0.0.1:9880\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +64,10 @@ function anything() {
 
         case "batch_set_hidden_params":
             handleBatchSetHiddenParams(args);
+            break;
+
+        case "check_dashboard":
+            handleCheckDashboard(args);
             break;
 
         default:
@@ -210,6 +215,20 @@ function handleBatchSetHiddenParams(args) {
         total_requested: paramsList.length,
         results: results
     }, requestId);
+}
+
+function handleCheckDashboard(args) {
+    var requestId = (args.length > 0) ? args[0].toString() : "";
+    var response = {
+        status: "success",
+        result: {
+            dashboard_url: "http://127.0.0.1:9880",
+            bridge_version: "1.1.0",
+            message: "Open the dashboard URL in your browser to view server status"
+        },
+        id: requestId
+    };
+    sendResponse(JSON.stringify(response));
 }
 
 // ---------------------------------------------------------------------------

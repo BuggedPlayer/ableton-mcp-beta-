@@ -10,6 +10,10 @@ from typing import AsyncIterator, Dict, Any, List, Union
 import uuid
 import base64
 import struct
+import os
+import threading
+import collections
+from datetime import datetime, timezone
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -357,18 +361,27 @@ class M4LConnection:
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     """Manage server startup and shutdown lifecycle"""
+    global _server_start_time
     try:
         logger.info("AbletonMCP Beta server starting up")
-        
+        _server_start_time = time.time()
+
         try:
             ableton = get_ableton_connection()
             logger.info("Successfully connected to Ableton on startup")
         except Exception as e:
             logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
             logger.warning("Make sure the Ableton Remote Script is running")
-        
+
+        # Start web dashboard on background thread
+        try:
+            _start_dashboard_server()
+        except Exception as e:
+            logger.warning(f"Dashboard failed to start: {e}")
+
         yield {}
     finally:
+        _stop_dashboard_server()
         global _ableton_connection, _m4l_connection
         if _ableton_connection:
             logger.info("Disconnecting from Ableton on shutdown")
@@ -394,6 +407,367 @@ _m4l_connection = None
 _snapshot_store: Dict[str, Dict[str, Any]] = {}
 _macro_store: Dict[str, Dict[str, Any]] = {}
 _param_map_store: Dict[str, Dict[str, Any]] = {}
+
+# Web dashboard state
+_server_start_time: float = 0.0
+_tool_call_log: collections.deque = collections.deque(maxlen=50)
+_tool_call_counts: Dict[str, int] = {}
+_tool_call_lock = threading.Lock()
+_dashboard_server = None
+DASHBOARD_PORT = int(os.environ.get("ABLETON_MCP_DASHBOARD_PORT", "9880"))
+_server_log_buffer: collections.deque = collections.deque(maxlen=200)
+_server_log_lock = threading.Lock()
+
+
+class _DashboardLogHandler(logging.Handler):
+    """Captures log records into the dashboard ring buffer."""
+
+    def emit(self, record):
+        try:
+            entry = {
+                "ts": self.format(record),
+                "level": record.levelname,
+                "msg": record.getMessage(),
+            }
+            with _server_log_lock:
+                _server_log_buffer.append(entry)
+        except Exception:
+            pass
+
+
+_dashboard_log_handler = _DashboardLogHandler()
+_dashboard_log_handler.setFormatter(
+    logging.Formatter('%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
+)
+logging.getLogger().addHandler(_dashboard_log_handler)
+
+# M4L ping cache (avoids 5s UDP timeout on every dashboard refresh)
+_m4l_ping_cache = {"result": False, "timestamp": 0.0}
+_M4L_PING_CACHE_TTL = 10.0
+
+
+# ---------------------------------------------------------------------------
+# Tool call instrumentation — captures all 81 tool calls for the dashboard
+# ---------------------------------------------------------------------------
+_original_call_tool = mcp.call_tool
+
+
+async def _instrumented_call_tool(name: str, arguments: dict) -> Any:
+    """Wrap every tool call to record metrics for the dashboard."""
+    start = time.time()
+    error_msg = None
+    try:
+        result = await _original_call_tool(name, arguments)
+        return result
+    except Exception as e:
+        error_msg = str(e)
+        raise
+    finally:
+        duration = time.time() - start
+        entry = {
+            "tool": name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": round(duration * 1000, 1),
+            "error": error_msg,
+            "args_summary": _summarize_args(arguments),
+        }
+        with _tool_call_lock:
+            _tool_call_log.append(entry)
+            _tool_call_counts[name] = _tool_call_counts.get(name, 0) + 1
+
+
+mcp.call_tool = _instrumented_call_tool
+
+
+def _summarize_args(args: dict) -> str:
+    """Create a short summary of tool arguments for the dashboard log."""
+    if not args:
+        return ""
+    parts = []
+    for k, v in list(args.items())[:3]:
+        sv = str(v)
+        if len(sv) > 40:
+            sv = sv[:37] + "..."
+        parts.append(f"{k}={sv}")
+    suffix = f" +{len(args)-3} more" if len(args) > 3 else ""
+    return ", ".join(parts) + suffix
+
+
+# ---------------------------------------------------------------------------
+# Web Status Dashboard
+# ---------------------------------------------------------------------------
+
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AbletonMCP Beta — Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    background: #0d1117; color: #c9d1d9; line-height: 1.5;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 24px; }
+  h1 { color: #58a6ff; font-size: 1.6rem; margin-bottom: 4px; }
+  .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px; margin-bottom: 24px;
+  }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px;
+  }
+  .card-label {
+    font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .card-value { font-size: 1.5rem; font-weight: 600; margin-top: 4px; }
+  .status-ok  { color: #3fb950; }
+  .status-err { color: #f85149; }
+  .status-warn { color: #d29922; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; color: #8b949e; font-size: 0.75rem; text-transform: uppercase;
+    padding: 8px 12px; border-bottom: 1px solid #30363d;
+  }
+  td { padding: 6px 12px; border-bottom: 1px solid #21262d; font-size: 0.85rem; }
+  tr:hover { background: #161b22; }
+  .error-cell { color: #f85149; }
+  .section {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 16px; margin-bottom: 24px;
+  }
+  .section h2 { font-size: 1rem; color: #58a6ff; margin-bottom: 12px; }
+  .refresh-bar {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
+  }
+  .refresh-bar span { font-size: 0.75rem; color: #8b949e; }
+  #countdown { color: #58a6ff; }
+  .bar-row {
+    display: flex; align-items: center; margin-bottom: 6px; font-size: 0.8rem;
+  }
+  .bar-name { width: 240px; color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { flex: 1; background: #21262d; border-radius: 4px; height: 20px; position: relative; }
+  .bar-fill { background: #1f6feb; border-radius: 4px; height: 100%; min-width: 2px; }
+  .bar-count { position: absolute; top: 0; left: 8px; line-height: 20px; font-size: 0.7rem; color: #c9d1d9; }
+  .empty-msg { color: #484f58; font-style: italic; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="refresh-bar">
+    <div><h1>AbletonMCP Beta</h1><div class="subtitle">Status Dashboard</div></div>
+    <span>Refresh in <span id="countdown">3</span>s</span>
+  </div>
+  <div class="grid" id="cards"></div>
+  <div class="section" id="top-tools-section"></div>
+  <div class="section">
+    <h2>Recent Tool Calls</h2>
+    <div id="log-area"></div>
+  </div>
+  <div class="section">
+    <h2>Server Log</h2>
+    <div id="server-log" style="
+      background:#0d1117; border:1px solid #30363d; border-radius:6px;
+      padding:12px; max-height:400px; overflow-y:auto; font-family:'Cascadia Code','Fira Code','Consolas',monospace;
+      font-size:0.78rem; line-height:1.6;
+    "></div>
+  </div>
+</div>
+<script>
+const REFRESH_MS = 3000;
+let countdown = 3;
+function fmtUp(s) {
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = Math.floor(s%60);
+  return (h>0?h+'h ':'')+(m>0?m+'m ':'')+sec+'s';
+}
+async function refresh() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    document.getElementById('cards').innerHTML = [
+      card('Server Version', d.version, ''),
+      card('Uptime', fmtUp(d.uptime_seconds), ''),
+      card('Ableton', d.ableton_connected?'Connected':'Disconnected',
+           d.ableton_connected?'status-ok':'status-err'),
+      card('M4L Bridge',
+           d.m4l_connected?'Connected':d.m4l_sockets_ready?'Sockets Ready':'Disconnected',
+           d.m4l_connected?'status-ok':d.m4l_sockets_ready?'status-warn':'status-err'),
+      card('Snapshots', d.store_counts.snapshots, ''),
+      card('Macros', d.store_counts.macros, ''),
+      card('Param Maps', d.store_counts.param_maps, ''),
+      card('Total Tool Calls', d.total_tool_calls, ''),
+    ].join('');
+    // Top tools
+    const tt = document.getElementById('top-tools-section');
+    if (d.top_tools.length) {
+      const max = d.top_tools[0][1];
+      tt.innerHTML = '<h2>Most Used Tools</h2>' + d.top_tools.map(([n,c])=>
+        '<div class="bar-row"><span class="bar-name">'+n+'</span>'+
+        '<div class="bar-track"><div class="bar-fill" style="width:'+(c/max*100).toFixed(1)+'%"></div>'+
+        '<span class="bar-count">'+c+'</span></div></div>'
+      ).join('');
+    } else { tt.innerHTML = '<h2>Most Used Tools</h2><p class="empty-msg">No tool calls yet</p>'; }
+    // Log
+    const la = document.getElementById('log-area');
+    if (d.recent_calls.length) {
+      la.innerHTML = '<table><thead><tr><th>Time</th><th>Tool</th><th>Duration</th><th>Args</th><th>Status</th></tr></thead><tbody>'+
+        d.recent_calls.slice().reverse().map(e=>
+          '<tr><td>'+(e.timestamp.split('T')[1]||'').slice(0,8)+'</td>'+
+          '<td>'+e.tool+'</td><td>'+e.duration_ms+'ms</td>'+
+          '<td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(e.args_summary||'')+'</td>'+
+          '<td class="'+(e.error?'error-cell':'')+'">'+(e.error||'OK')+'</td></tr>'
+        ).join('')+'</tbody></table>';
+    } else { la.innerHTML = '<p class="empty-msg">No tool calls yet</p>'; }
+    // Server log
+    const sl = document.getElementById('server-log');
+    if (d.server_logs && d.server_logs.length) {
+      const colors = {INFO:'#8b949e',WARNING:'#d29922',ERROR:'#f85149',DEBUG:'#484f58',CRITICAL:'#f85149'};
+      sl.innerHTML = d.server_logs.map(e=>{
+        const c = colors[e.level]||'#8b949e';
+        const lvl = e.level.padEnd(7);
+        return '<div><span style="color:#484f58">'+e.ts+'</span> <span style="color:'+c+'">'+
+               lvl+'</span> '+escHtml(e.msg)+'</div>';
+      }).join('');
+      sl.scrollTop = sl.scrollHeight;
+    } else { sl.innerHTML = '<div style="color:#484f58;font-style:italic">No log entries yet</div>'; }
+  } catch(err) { console.error('Dashboard refresh failed:', err); }
+  countdown = REFRESH_MS/1000;
+}
+function card(label, value, cls) {
+  return '<div class="card"><div class="card-label">'+label+'</div>'+
+         '<div class="card-value '+(cls||'')+'">'+value+'</div></div>';
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+refresh();
+setInterval(refresh, REFRESH_MS);
+setInterval(()=>{countdown=Math.max(0,countdown-1);
+  document.getElementById('countdown').textContent=countdown;},1000);
+</script>
+</body>
+</html>"""
+
+
+def _get_server_version() -> str:
+    """Get server version from package metadata, with fallback."""
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("ableton-mcp-beta")
+    except Exception:
+        return "1.6.0"
+
+
+def _get_m4l_status() -> tuple:
+    """Return (sockets_ready, bridge_responding) with cached ping."""
+    sockets_ready = bool(_m4l_connection and _m4l_connection._connected)
+    if not sockets_ready:
+        return False, False
+
+    now = time.time()
+    if now - _m4l_ping_cache["timestamp"] < _M4L_PING_CACHE_TTL:
+        return sockets_ready, _m4l_ping_cache["result"]
+
+    try:
+        result = _m4l_connection.ping()
+    except Exception:
+        result = False
+
+    _m4l_ping_cache["result"] = result
+    _m4l_ping_cache["timestamp"] = now
+    return sockets_ready, result
+
+
+def _build_status_json() -> dict:
+    """Collect all dashboard status data into a JSON-serializable dict."""
+    ableton_connected = False
+    if _ableton_connection and _ableton_connection.sock:
+        try:
+            _ableton_connection.sock.getpeername()
+            ableton_connected = True
+        except Exception:
+            pass
+
+    m4l_sockets_ready, m4l_connected = _get_m4l_status()
+
+    with _tool_call_lock:
+        recent = list(_tool_call_log)
+        counts_copy = dict(_tool_call_counts)
+
+    with _server_log_lock:
+        server_logs = list(_server_log_buffer)
+
+    total = sum(counts_copy.values())
+    top_tools = sorted(counts_copy.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    return {
+        "version": _get_server_version(),
+        "uptime_seconds": round(time.time() - _server_start_time, 1) if _server_start_time else 0,
+        "ableton_connected": ableton_connected,
+        "m4l_connected": m4l_connected,
+        "m4l_sockets_ready": m4l_sockets_ready,
+        "store_counts": {
+            "snapshots": len(_snapshot_store),
+            "macros": len(_macro_store),
+            "param_maps": len(_param_map_store),
+        },
+        "total_tool_calls": total,
+        "top_tools": top_tools,
+        "recent_calls": recent,
+        "server_logs": server_logs,
+        "tool_count": 81,
+    }
+
+
+def _start_dashboard_server():
+    """Start the dashboard HTTP server on a background thread."""
+    global _dashboard_server
+    from starlette.applications import Starlette
+    from starlette.responses import HTMLResponse, JSONResponse
+    from starlette.routing import Route
+    import uvicorn
+
+    async def dashboard_page(request):
+        return HTMLResponse(DASHBOARD_HTML)
+
+    async def api_status(request):
+        return JSONResponse(_build_status_json())
+
+    app = Starlette(routes=[
+        Route("/", dashboard_page),
+        Route("/api/status", api_status),
+    ])
+
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=DASHBOARD_PORT,
+        log_level="warning",
+        access_log=False,
+    )
+    _dashboard_server = uvicorn.Server(config)
+
+    def _run():
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_dashboard_server.serve())
+
+    thread = threading.Thread(target=_run, daemon=True, name="dashboard-http")
+    thread.start()
+    logger.info(f"Dashboard started at http://127.0.0.1:{DASHBOARD_PORT}")
+
+
+def _stop_dashboard_server():
+    """Signal the dashboard server to shut down."""
+    global _dashboard_server
+    if _dashboard_server:
+        _dashboard_server.should_exit = True
+        _dashboard_server = None
+        logger.info("Dashboard server stopped")
+
 
 def get_ableton_connection():
     """Get or create a persistent Ableton connection"""

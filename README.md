@@ -14,6 +14,8 @@ The system consists of three components that communicate through two protocols:
 Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
                           |
                           +------<--UDP/OSC:9878/9879-->  M4L Bridge (optional)
+                          |
+                          +------<--HTTP:9880-->  Web Status Dashboard
 ```
 
 ### 1. Ableton Remote Script (`AbletonMCP_Remote_Script/__init__.py`)
@@ -31,14 +33,24 @@ A Python server that implements the Model Context Protocol and bridges between t
 - **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends length-prefixed JSON commands and receives length-prefixed JSON responses. Includes automatic reconnection logic.
 - **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
 
-The server exposes **61 MCP tools** that Claude can call.
+The server exposes **81 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
 
-### 3. Max for Live Bridge (`M4L_Device/m4l_bridge.js`) *(optional)*
+### 3. Web Status Dashboard (`http://127.0.0.1:9880`)
+A live web dashboard running on a background thread alongside the MCP server. Auto-refreshes every 3 seconds.
+
+- **Status cards**: Server version, uptime, Ableton connection, M4L bridge status, snapshot/macro/param map counts, total tool calls
+- **Most Used Tools**: Bar chart of the top 10 most-called MCP tools
+- **Recent Tool Calls**: Table showing tool name, duration, arguments, and error status (last 50 calls)
+- **Server Log**: Real-time terminal-style log viewer showing all server log entries (last 200 lines, color-coded by level)
+- Configurable port via `ABLETON_MCP_DASHBOARD_PORT` environment variable (default: 9880)
+- Uses starlette + uvicorn (already installed as transitive deps of `mcp[cli]`, zero new dependencies)
+
+### 4. Max for Live Bridge (`M4L_Device/m4l_bridge.js`) *(optional)*
 A JavaScript file running inside a Max for Live `[js]` object. It provides deep Live Object Model (LOM) access to hidden/non-automatable device parameters that the standard Remote Script API cannot reach.
 
 ---
 
-## Complete Tool Reference (61 Tools)
+## Complete Tool Reference (81 Tools)
 
 ### Session & Transport
 
@@ -155,6 +167,51 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | `get_device_hidden_parameters` | `track_index: int, device_index: int` | Get hidden parameter details (name, value, min, max, quantized) |
 | `set_device_hidden_parameter` | `track_index: int, device_index: int, parameter_index: int, value: float` | Set any parameter by its LOM index |
 | `list_instrument_rack_presets` | — | List Instrument Rack presets in user library (VST/AU workaround) |
+| `batch_set_hidden_parameters` | `track_index: int, device_index: int, parameters: list` | Set multiple hidden parameters in one call. Each entry: `{index, value}` |
+
+### Snapshot & Versioning (v1.6.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `snapshot_device_state` | `track_index: int, device_index: int, snapshot_name: str` | Capture complete device state (all params) into a named snapshot |
+| `restore_device_snapshot` | `snapshot_id: str, track_index?: int, device_index?: int` | Restore a saved snapshot (optionally to a different device) |
+| `list_snapshots` | — | List all stored snapshots with IDs, names, and timestamps |
+| `get_snapshot_details` | `snapshot_id: str` | Show full parameter values of a snapshot |
+| `delete_snapshot` | `snapshot_id: str` | Delete a snapshot |
+| `delete_all_snapshots` | — | Clear all snapshots, macros, and parameter maps |
+| `snapshot_all_devices` | `track_indices: list, snapshot_name: str` | Snapshot every device across multiple tracks as a group |
+| `restore_group_snapshot` | `group_id: str` | Restore all devices from a group snapshot |
+| `compare_snapshots` | `snapshot_a_id: str, snapshot_b_id: str` | Diff two snapshots — show changed parameters with deltas |
+
+### Preset Morph Engine (v1.6.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `morph_between_snapshots` | `snapshot_a_id: str, snapshot_b_id: str, position: float` | Interpolate between two snapshots (0.0=A, 1.0=B). Quantized params snap at midpoint |
+
+### Smart Macro Controller (v1.6.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `create_macro_controller` | `name: str, mappings: list` | Create a macro linking multiple params. Each mapping: `{track_index, device_index, parameter_index, min_value, max_value}` |
+| `set_macro_value` | `macro_id: str, value: float` | Set macro 0.0-1.0, interpolating all linked params via batch set |
+| `list_macros` | — | List all macro controllers |
+| `delete_macro` | `macro_id: str` | Delete a macro controller |
+
+### Intelligent Preset Generator (v1.6.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `generate_preset` | `track_index: int, device_index: int, description: str, variation_count: int` | Discover all params, auto-snapshot current state, return param list for AI-driven preset creation |
+
+### VST/AU Parameter Mapper (v1.6.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `create_parameter_map` | `track_index: int, device_index: int, friendly_names: list` | Map cryptic param names to friendly names with categories |
+| `get_parameter_map` | `map_id: str` | Retrieve a stored parameter map |
+| `list_parameter_maps` | — | List all parameter maps |
+| `delete_parameter_map` | `map_id: str` | Delete a parameter map |
 
 ---
 
@@ -194,6 +251,8 @@ The MCP server sends native OSC messages to port **9878** (M4L `udpreceive`). Th
 | `/discover_params` | `track_index, device_index, request_id` | Enumerate all LOM parameters |
 | `/get_hidden_params` | `track_index, device_index, request_id` | Get hidden parameter details |
 | `/set_hidden_param` | `track_index, device_index, param_index, value, request_id` | Set a parameter by LOM index |
+| `/batch_set_hidden_params` | `track_index, device_index, params_b64, request_id` | Set multiple params at once. `params_b64` is base64-encoded JSON: `[{index, value}, ...]` |
+| `/check_dashboard` | `request_id` | Returns the dashboard URL and bridge version |
 
 **Why base64?** Max treats `{` and `}` as special characters in its messaging system, so JSON responses are base64-encoded before being sent through `outlet()`.
 
@@ -252,6 +311,29 @@ The Remote Script (`AbletonMCP_Remote_Script/__init__.py`) is a `ControlSurface`
 
 ---
 
+## v1.6.0 Feature Systems
+
+Five advanced feature systems built on shared core primitives. All route through the M4L bridge — no Remote Script changes needed.
+
+### Intelligent Preset Generator
+Discover all device parameters, then Claude intelligently sets values based on text descriptions like "bright bass", "warm pad", or "aggressive lead". Auto-snapshots current state for easy revert.
+
+### Smart Macro Controller
+Link multiple parameters across devices to a single 0.0-1.0 "super-knob". When the macro moves, all linked parameters interpolate proportionally. Supports cross-device, cross-track linking.
+
+### VST/AU Parameter Mapper
+Scan third-party plugins, discover their hidden parameters, and create custom control surfaces with human-readable names organized by category.
+
+### Preset Morph Engine
+Capture two different device states as snapshots, then smoothly morph between them at any position. Continuous parameters interpolate linearly; quantized parameters (waveform selectors) snap at the midpoint.
+
+### Device State Versioning & Undo
+Snapshot every device on your tracks, then rollback to any previous state. Group snapshots capture multiple tracks at once. Compare any two snapshots to see exactly what changed.
+
+**Core primitive**: `batch_set_hidden_parameters` sets 100+ params in a single M4L round-trip instead of 100 separate calls.
+
+---
+
 ## Installation
 
 ### Prerequisites
@@ -275,34 +357,19 @@ Add to `claude_desktop_config.json`:
 ```json
 {
     "mcpServers": {
-        "AbletonMCP": {
+        "AbletonMCP-Beta": {
             "command": "uvx",
-            "args": ["ableton-mcp"]
+            "args": ["path/to/dist/ableton_mcp_beta-1.6.0-py3-none-any.whl"]
         }
     }
 }
 ```
 
-For local development from a built wheel:
-```json
-{
-    "mcpServers": {
-        "AbletonMCP": {
-            "command": "uvx",
-            "args": ["path/to/dist/ableton_mcp-1.0.0-py3-none-any.whl"]
-        }
-    }
-}
-```
+After starting, the web dashboard is available at `http://127.0.0.1:9880`.
 
 ### Cursor Integration
 
-Go to Cursor Settings > MCP and set the command to:
-```
-uvx ableton-mcp
-```
-
-Only run one instance of the MCP server (either Cursor or Claude Desktop), not both.
+Go to Cursor Settings > MCP and set the command to the wheel path. Only run one instance of the MCP server (either Cursor or Claude Desktop), not both.
 
 ### Installing the Remote Script
 
@@ -360,6 +427,7 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 - **Changes not taking effect**: If you edited source code, rebuild the `.whl` with `uv build` — the MCP server runs from the packaged wheel, not source files
 - **Remote Script not updating**: Delete `__pycache__/__init__.cpython-*.pyc` in the Ableton MIDI Remote Scripts folder, then reload the control surface
 - **Multiple server instances**: Ensure only one MCP server is running at a time
+- **Dashboard not loading**: Make sure Claude Desktop is running the latest wheel (check `claude_desktop_config.json`). Restart Claude Desktop after rebuilding. If port 9880 is in use, set `ABLETON_MCP_DASHBOARD_PORT` env var
 
 ## Disclaimer
 
