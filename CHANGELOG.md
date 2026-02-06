@@ -4,6 +4,46 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v1.8.3
+
+### Architecture: Modular Remote Script
+- **Refactored** `AbletonMCP_Remote_Script/__init__.py` from a ~3000-line monolith into a thin routing layer (~660 lines) with 11 handler modules under `handlers/`:
+  - `session.py` — session info, transport, loop, recording, metronome
+  - `tracks.py` — track CRUD, arm, color, group
+  - `clips.py` — clip CRUD, notes, fire/stop, loop, markers
+  - `mixer.py` — volume, pan, mute, solo, sends, return/master tracks, scenes
+  - `devices.py` — device parameters with `track_type` support, macros
+  - `browser.py` — browser tree, search, load instruments/samples
+  - `scenes.py` — scene CRUD, fire, rename
+  - `arrangement.py` — arrangement clip operations
+  - `audio.py` — audio clip info, warp, reverse, analyze, freeze
+  - `midi.py` — MIDI notes (legacy + extended), quantize, transpose, capture, groove
+  - `automation.py` — clip/track automation, arrangement time editing
+- Each handler uses standalone functions `f(song, ..., ctrl=None)` — testable without the ControlSurface class
+
+### New: Grid Notation System
+- `clip_to_grid` — read a MIDI clip and display as ASCII grid notation (auto-detects drum vs melodic)
+- `grid_to_clip` — write ASCII drum/melodic grid patterns to a MIDI clip
+- Supports drum labels (KK, SN, HC, etc.) and melodic note names (C4, G#3, etc.)
+- Velocity symbols: `o` (normal), `O` (accent), `.` (ghost), `x` (hi-hat)
+
+### New: 36 MCP Tools
+- **Session/Transport (11)**: `get_loop_info`, `get_recording_status`, `set_loop_start`, `set_loop_end`, `set_loop_length`, `set_playback_position`, `set_arrangement_overdub`, `start_arrangement_recording`, `stop_arrangement_recording`, `set_metronome`, `tap_tempo`
+- **Tracks (7)**: `get_all_tracks_info`, `get_return_tracks_info`, `create_return_track`, `set_track_color`, `arm_track`, `disarm_track`, `group_tracks`
+- **Audio (7)**: `get_audio_clip_info`, `analyze_audio_clip`, `set_warp_mode`, `set_clip_warp`, `reverse_clip`, `freeze_track`, `unfreeze_track`
+- **Grid (2)**: `clip_to_grid`, `grid_to_clip`
+- **MIDI (2)**: `capture_midi`, `apply_groove`
+- **Arrangement (4)**: `get_arrangement_clips`, `delete_time`, `duplicate_time`, `insert_silence`
+- **Automation (2)**: `create_track_automation`, `clear_track_automation`
+- **Devices (1)**: `get_macro_values`
+
+### Improvements
+- **Connection stability**: Added 0.1s delays before/after modifying commands to prevent race conditions with Ableton's internal processing. Modifying commands use 15s timeout, read-only commands use 10s.
+- **`track_type` support**: `get_device_parameters` and `set_device_parameter` now accept `track_type` ("track", "return", "master") to control devices on return and master tracks.
+- Total tools: 94 -> **130** (+36 new tools)
+
+---
+
 ## v1.8.2
 
 ### Bug Fix: `batch_set_hidden_parameters` crash
