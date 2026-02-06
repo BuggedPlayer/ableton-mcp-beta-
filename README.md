@@ -30,7 +30,7 @@ A MIDI Remote Script (Python) that runs inside Ableton Live as a Control Surface
 ### 2. MCP Server (`MCP_Server/server.py`)
 A Python server that implements the Model Context Protocol and bridges between the AI client and Ableton. It maintains two connection classes:
 
-- **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends length-prefixed JSON commands and receives length-prefixed JSON responses. Includes automatic reconnection logic.
+- **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends newline-delimited JSON commands and receives newline-delimited JSON responses. Includes automatic reconnection logic.
 - **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
 
 The server exposes **94 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
@@ -361,6 +361,16 @@ The server now automatically connects to the M4L bridge device on startup, right
 
 **Core primitive**: `batch_set_hidden_parameters` sets 100+ params in a single M4L round-trip instead of 100 separate calls.
 
+### v1.8.1 — Stability & Hidden Parameter Crash Fix
+
+- **Fixed**: `set_device_hidden_parameter` no longer crashes Ableton — added try-catch around LOM parameter set/get calls in the M4L bridge JS (matching the batch handler pattern)
+- **Fixed**: Proper `socket.shutdown()` before `close()` on disconnect — prevents socket hangs and FD leaks
+- **Fixed**: Buffer overflow now notifies client with error message before disconnecting (was silent drop)
+- **Fixed**: UTF-8 decode uses `errors='replace'` — invalid bytes no longer crash the client handler
+- **Fixed**: M4L response `request_id` verification — warns on mismatch to detect stale responses
+- **Fixed**: Server version fallback updated to 1.8.1
+- **Improved**: Thread join timeout on disconnect increased from 1s to 3s for cleaner shutdown
+
 ### v1.8.0 — Arrangement View & Advanced Editing
 
 #### Arrangement View Workflow
@@ -402,7 +412,7 @@ Add to `claude_desktop_config.json`:
     "mcpServers": {
         "AbletonMCP-Beta": {
             "command": "uvx",
-            "args": ["path/to/dist/ableton_mcp_beta-1.8.0-py3-none-any.whl"]
+            "args": ["path/to/dist/ableton_mcp_beta-1.8.1-py3-none-any.whl"]
         }
     }
 }
