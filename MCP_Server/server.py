@@ -474,7 +474,7 @@ class _DashboardLogHandler(logging.Handler):
     def emit(self, record):
         try:
             entry = {
-                "ts": self.format(record),
+                "ts": datetime.now().strftime("%H:%M:%S"),
                 "level": record.levelname,
                 "msg": record.getMessage(),
             }
@@ -485,9 +485,6 @@ class _DashboardLogHandler(logging.Handler):
 
 
 _dashboard_log_handler = _DashboardLogHandler()
-_dashboard_log_handler.setFormatter(
-    logging.Formatter('%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
-)
 logging.getLogger().addHandler(_dashboard_log_handler)
 
 # M4L ping cache (avoids 5s UDP timeout on every dashboard refresh)
@@ -601,6 +598,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .bar-fill { background: #1f6feb; border-radius: 4px; height: 100%; min-width: 2px; }
   .bar-count { position: absolute; top: 0; left: 8px; line-height: 20px; font-size: 0.7rem; color: #c9d1d9; }
   .empty-msg { color: #484f58; font-style: italic; font-size: 0.85rem; }
+  .status-banner {
+    padding: 10px 16px; border-radius: 8px; margin-bottom: 16px;
+    font-size: 0.85rem; font-weight: 500; display: flex; align-items: center; gap: 8px;
+  }
+  .status-banner .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .banner-ok { background: #0d2818; border: 1px solid #238636; color: #3fb950; }
+  .banner-ok .dot { background: #3fb950; }
+  .banner-warn { background: #2a1f00; border: 1px solid #9e6a03; color: #d29922; }
+  .banner-warn .dot { background: #d29922; }
+  .banner-err { background: #2d0a0a; border: 1px solid #da3633; color: #f85149; }
+  .banner-err .dot { background: #f85149; }
 </style>
 </head>
 <body>
@@ -609,6 +617,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div><h1>AbletonMCP Beta</h1><div class="subtitle">Status Dashboard</div></div>
     <span>Refresh in <span id="countdown">3</span>s</span>
   </div>
+  <div id="status-banner"></div>
   <div class="grid" id="cards"></div>
   <div class="section" id="top-tools-section"></div>
   <div class="section">
@@ -635,6 +644,15 @@ async function refresh() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
+    // Status banner
+    const sb = document.getElementById('status-banner');
+    if (d.ableton_connected && d.m4l_connected) {
+      sb.innerHTML = '<div class="status-banner banner-ok"><span class="dot"></span>All systems operational — Ableton + M4L Bridge connected and ready</div>';
+    } else if (d.ableton_connected && !d.m4l_connected) {
+      sb.innerHTML = '<div class="status-banner banner-warn"><span class="dot"></span>Ableton connected — M4L Bridge '+(d.m4l_sockets_ready?'waiting for device response':'not connected')+'</div>';
+    } else {
+      sb.innerHTML = '<div class="status-banner banner-err"><span class="dot"></span>Ableton not connected — make sure the Remote Script is loaded</div>';
+    }
     document.getElementById('cards').innerHTML = [
       card('Server Version', d.version, ''),
       card('Uptime', fmtUp(d.uptime_seconds), ''),
