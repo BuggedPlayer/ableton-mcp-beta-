@@ -33,7 +33,7 @@ A Python server that implements the Model Context Protocol and bridges between t
 - **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends length-prefixed JSON commands and receives length-prefixed JSON responses. Includes automatic reconnection logic.
 - **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
 
-The server exposes **81 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
+The server exposes **94 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
 
 **Startup sequence:**
 1. Connect to Ableton Remote Script (TCP port 9877)
@@ -55,7 +55,7 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 
 ---
 
-## Complete Tool Reference (81 Tools)
+## Complete Tool Reference (94 Tools)
 
 ### Session & Transport
 
@@ -65,6 +65,9 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | `set_tempo` | `tempo: float` | Set the session tempo in BPM |
 | `start_playback` | — | Start playing the session |
 | `stop_playback` | — | Stop playing the session |
+| `get_song_transport` | — | Get arrangement state: playhead position, tempo, time signature, loop bracket, record mode, song length |
+| `set_song_time` | `time: float` | Set the arrangement playhead position (in beats) |
+| `set_song_loop` | `enabled?: bool, start?: float, length?: float` | Control the arrangement loop bracket (enable/disable, set start/length) |
 
 ### Track Management
 
@@ -102,6 +105,10 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | `set_clip_looping` | `track_index: int, clip_index: int, looping: bool` | Enable or disable clip looping |
 | `set_clip_loop_points` | `track_index: int, clip_index: int, loop_start: float, loop_end: float` | Set loop start and end positions in beats |
 | `set_clip_color` | `track_index: int, clip_index: int, color_index: int` | Set clip color (0-69, Ableton's palette) |
+| `crop_clip` | `track_index: int, clip_index: int` | Trim clip to its current loop region, discarding content outside |
+| `duplicate_clip_loop` | `track_index: int, clip_index: int` | Double the loop content (e.g. 4 bars → 8 bars with content repeated) |
+| `set_clip_start_end` | `track_index: int, clip_index: int, start_marker?: float, end_marker?: float` | Set clip start/end marker positions (controls playback region) |
+| `duplicate_clip_to_arrangement` | `track_index: int, clip_index: int, time: float` | Copy a session clip to the arrangement timeline at a beat position (Live 11+) |
 
 ### MIDI Notes
 
@@ -112,6 +119,18 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | `clear_clip_notes` | `track_index: int, clip_index: int` | Remove all MIDI notes from a clip |
 | `quantize_clip_notes` | `track_index: int, clip_index: int, grid_size: float` | Quantize notes to grid (0.25=16th, 0.5=8th, 1.0=quarter) |
 | `transpose_clip_notes` | `track_index: int, clip_index: int, semitones: int` | Transpose all notes by N semitones |
+| `add_notes_extended` | `track_index: int, clip_index: int, notes: list` | Add notes with Live 11+ properties: `{pitch, start_time, duration, velocity, mute, probability, velocity_deviation, release_velocity}` |
+| `get_notes_extended` | `track_index: int, clip_index: int, start_time?: float, time_span?: float` | Get notes with extended properties (probability, velocity_deviation, release_velocity) |
+| `remove_notes_range` | `track_index: int, clip_index: int, from_time: float, time_span: float, from_pitch?: int, pitch_span?: int` | Selectively remove notes within a specific time and pitch range |
+
+### Automation (v1.8.0)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `create_clip_automation` | `track_index: int, clip_index: int, parameter_name: str, automation_points: list` | Create automation for a parameter within a clip. Points: `[{time, value}, ...]` |
+| `get_clip_automation` | `track_index: int, clip_index: int, parameter_name: str` | Read existing automation — samples envelope at 64 points across the clip |
+| `clear_clip_automation` | `track_index: int, clip_index: int, parameter_name: str` | Clear automation for a specific parameter in a clip |
+| `list_clip_automated_parameters` | `track_index: int, clip_index: int` | List all parameters that have automation in a clip (mixer, sends, device params) |
 
 ### Scenes
 
@@ -148,7 +167,6 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 | `get_device_parameters` | `track_index: int, device_index: int` | Get all parameters and values for a device |
 | `set_device_parameter` | `track_index: int, device_index: int, parameter_name: str, value: float` | Set a device parameter by name (clamped to min/max) |
 | `delete_device` | `track_index: int, device_index: int` | Delete a device from a track |
-| `create_clip_automation` | `track_index: int, clip_index: int, parameter_name: str, automation_points: list` | Create automation for a parameter within a clip. Points: `[{time, value}, ...]` |
 
 ### Browser & Loading
 
@@ -343,6 +361,20 @@ The server now automatically connects to the M4L bridge device on startup, right
 
 **Core primitive**: `batch_set_hidden_parameters` sets 100+ params in a single M4L round-trip instead of 100 separate calls.
 
+### v1.8.0 — Arrangement View & Advanced Editing
+
+#### Arrangement View Workflow
+Build clips in session view, then place them on the arrangement timeline with `duplicate_clip_to_arrangement`. Control the arrangement playhead (`set_song_time`), loop bracket (`set_song_loop`), and read full transport state (`get_song_transport`). While Ableton's API doesn't allow direct arrangement clip editing, this session-to-arrangement workflow is the supported path.
+
+#### Advanced Clip Operations
+`crop_clip` trims a clip to its loop region. `duplicate_clip_loop` doubles the loop content. `set_clip_start_end` controls playback start/end markers without modifying notes.
+
+#### Advanced MIDI Note Editing (Live 11+)
+`add_notes_extended` and `get_notes_extended` support Live 11+ note properties: **probability** (0.0-1.0 trigger chance), **velocity_deviation** (random velocity range), and **release_velocity**. Falls back gracefully to legacy APIs on older Live versions. `remove_notes_range` allows selective note removal by time and pitch range.
+
+#### Automation Reading & Editing
+Automation is no longer write-only. `get_clip_automation` reads existing envelope data by sampling 64 points across the clip. `list_clip_automated_parameters` discovers all automated parameters in a clip (mixer, sends, device params). `clear_clip_automation` removes automation for a specific parameter.
+
 ---
 
 ## Installation
@@ -370,7 +402,7 @@ Add to `claude_desktop_config.json`:
     "mcpServers": {
         "AbletonMCP-Beta": {
             "command": "uvx",
-            "args": ["path/to/dist/ableton_mcp_beta-1.6.0-py3-none-any.whl"]
+            "args": ["path/to/dist/ableton_mcp_beta-1.8.0-py3-none-any.whl"]
         }
     }
 }
@@ -427,8 +459,9 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 
 - VST/AU plugins cannot be loaded directly (Ableton API limitation) — save as Instrument Rack first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`
 - Complex arrangements should be broken into smaller steps
-- `create_clip_automation` has limited support — works best with MIDI clips and basic device parameters
-- Arrangement view automation is not supported via the API
+- Clip automation works best with MIDI clips and basic device parameters
+- Arrangement view is limited: clips can be placed via `duplicate_clip_to_arrangement` but not edited directly in arrangement. Arrangement automation is not supported by Ableton's API
+- Extended note properties (probability, velocity_deviation, release_velocity) require Live 11+
 - Always save your work before extensive experimentation
 
 ## Troubleshooting

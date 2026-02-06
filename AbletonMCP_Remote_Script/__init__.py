@@ -254,7 +254,10 @@ class AbletonMCP(ControlSurface):
                                  "clear_clip_notes", "quantize_clip_notes", "transpose_clip_notes",
                                  "set_clip_looping", "set_clip_loop_points", "set_clip_color",
                                  "set_return_track_pan", "set_return_track_mute", "set_return_track_solo",
-                                 "set_master_volume"]:
+                                 "set_master_volume",
+                                 "set_song_time", "set_song_loop", "duplicate_clip_to_arrangement",
+                                 "crop_clip", "duplicate_clip_loop", "set_clip_start_end",
+                                 "add_notes_extended", "remove_notes_range", "clear_clip_automation"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -428,6 +431,59 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "set_master_volume":
                             volume = params.get("volume", 0.85)
                             result = self._set_master_volume(volume)
+                        # --- Arrangement / Advanced Clip / Automation ---
+                        elif command_type == "set_song_time":
+                            result = self._set_song_time(params.get("time", 0.0))
+                        elif command_type == "set_song_loop":
+                            result = self._set_song_loop(
+                                params.get("enabled"),
+                                params.get("start"),
+                                params.get("length"),
+                            )
+                        elif command_type == "duplicate_clip_to_arrangement":
+                            result = self._duplicate_clip_to_arrangement(
+                                params.get("track_index", 0),
+                                params.get("clip_index", 0),
+                                params.get("time", 0.0),
+                            )
+                        elif command_type == "crop_clip":
+                            result = self._crop_clip(
+                                params.get("track_index", 0),
+                                params.get("clip_index", 0),
+                            )
+                        elif command_type == "duplicate_clip_loop":
+                            result = self._duplicate_clip_loop(
+                                params.get("track_index", 0),
+                                params.get("clip_index", 0),
+                            )
+                        elif command_type == "set_clip_start_end":
+                            result = self._set_clip_start_end(
+                                params.get("track_index", 0),
+                                params.get("clip_index", 0),
+                                params.get("start_marker"),
+                                params.get("end_marker"),
+                            )
+                        elif command_type == "add_notes_extended":
+                            result = self._add_notes_extended(
+                                params.get("track_index", 0),
+                                params.get("clip_index", 0),
+                                params.get("notes", []),
+                            )
+                        elif command_type == "remove_notes_range":
+                            result = self._remove_notes_range(
+                                params.get("track_index", 0),
+                                params.get("clip_index", 0),
+                                params.get("from_time", 0.0),
+                                params.get("time_span", 0.0),
+                                params.get("from_pitch", 0),
+                                params.get("pitch_span", 128),
+                            )
+                        elif command_type == "clear_clip_automation":
+                            result = self._clear_clip_automation(
+                                params.get("track_index", 0),
+                                params.get("clip_index", 0),
+                                params.get("parameter_name", ""),
+                            )
 
                         # Put the result in the queue
                         response_queue.put({"status": "success", "result": result})
@@ -499,6 +555,27 @@ class AbletonMCP(ControlSurface):
                 response["result"] = self._get_clip_info(track_index, clip_index)
             elif command_type == "get_master_track_info":
                 response["result"] = self._get_master_track_info()
+            # --- Read-only: Arrangement / Advanced Clip / Automation ---
+            elif command_type == "get_song_transport":
+                response["result"] = self._get_song_transport()
+            elif command_type == "get_notes_extended":
+                response["result"] = self._get_notes_extended(
+                    params.get("track_index", 0),
+                    params.get("clip_index", 0),
+                    params.get("start_time", 0.0),
+                    params.get("time_span", 0.0),
+                )
+            elif command_type == "get_clip_automation":
+                response["result"] = self._get_clip_automation(
+                    params.get("track_index", 0),
+                    params.get("clip_index", 0),
+                    params.get("parameter_name", ""),
+                )
+            elif command_type == "list_clip_automated_params":
+                response["result"] = self._list_clip_automated_params(
+                    params.get("track_index", 0),
+                    params.get("clip_index", 0),
+                )
             else:
                 response["status"] = "error"
                 response["message"] = "Unknown command: " + command_type
@@ -2525,4 +2602,456 @@ class AbletonMCP(ControlSurface):
         except Exception as e:
             self.log_message("Error getting browser items at path: {0}".format(str(e)))
             self.log_message(traceback.format_exc())
+            raise
+
+    # ------------------------------------------------------------------
+    # Helpers (DRY)
+    # ------------------------------------------------------------------
+
+    def _get_clip(self, track_index, clip_index):
+        """Get clip object with validation — raises on invalid indices or empty slot."""
+        if track_index < 0 or track_index >= len(self._song.tracks):
+            raise IndexError("Track index out of range")
+        track = self._song.tracks[track_index]
+        if clip_index < 0 or clip_index >= len(track.clip_slots):
+            raise IndexError("Clip index out of range")
+        clip_slot = track.clip_slots[clip_index]
+        if not clip_slot.has_clip:
+            raise Exception("No clip in slot")
+        return clip_slot.clip
+
+    def _find_parameter(self, track_index, parameter_name):
+        """Find a track mixer or device parameter by name."""
+        track = self._song.tracks[track_index]
+        lower = parameter_name.lower()
+        if lower == "volume":
+            return track.mixer_device.volume
+        elif lower in ("pan", "panning"):
+            return track.mixer_device.panning
+        for device in track.devices:
+            for p in device.parameters:
+                if p.name.lower() == lower:
+                    return p
+        raise ValueError("Parameter '{0}' not found".format(parameter_name))
+
+    # ------------------------------------------------------------------
+    # Phase 1: Arrangement View Workflow
+    # ------------------------------------------------------------------
+
+    def _get_song_transport(self):
+        """Get transport/arrangement state"""
+        try:
+            result = {
+                "current_time": self._song.current_song_time,
+                "is_playing": self._song.is_playing,
+                "tempo": self._song.tempo,
+                "signature_numerator": self._song.signature_numerator,
+                "signature_denominator": self._song.signature_denominator,
+                "loop_enabled": self._song.loop,
+                "loop_start": self._song.loop_start,
+                "loop_length": self._song.loop_length,
+                "song_length": self._song.song_length,
+            }
+            try:
+                result["record_mode"] = self._song.record_mode
+            except Exception:
+                result["record_mode"] = False
+            return result
+        except Exception as e:
+            self.log_message("Error getting song transport: " + str(e))
+            raise
+
+    def _set_song_time(self, time):
+        """Set the arrangement playhead position"""
+        try:
+            self._song.current_song_time = max(0.0, float(time))
+            return {"current_time": self._song.current_song_time}
+        except Exception as e:
+            self.log_message("Error setting song time: " + str(e))
+            raise
+
+    def _set_song_loop(self, enabled, start, length):
+        """Control arrangement loop bracket"""
+        try:
+            if enabled is not None:
+                self._song.loop = bool(enabled)
+            if start is not None:
+                self._song.loop_start = max(0.0, float(start))
+            if length is not None:
+                self._song.loop_length = max(0.0, float(length))
+            return {
+                "loop_enabled": self._song.loop,
+                "loop_start": self._song.loop_start,
+                "loop_length": self._song.loop_length,
+            }
+        except Exception as e:
+            self.log_message("Error setting song loop: " + str(e))
+            raise
+
+    def _duplicate_clip_to_arrangement(self, track_index, clip_index, time):
+        """Copy a session clip to the arrangement timeline"""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            clip = self._get_clip(track_index, clip_index)
+            if not hasattr(track, 'duplicate_clip_to_arrangement'):
+                raise Exception("duplicate_clip_to_arrangement requires Live 11 or later")
+            track.duplicate_clip_to_arrangement(clip, float(time))
+            return {
+                "placed_at": float(time),
+                "clip_name": clip.name,
+                "clip_length": clip.length,
+                "track_index": track_index,
+            }
+        except Exception as e:
+            self.log_message("Error duplicating clip to arrangement: " + str(e))
+            raise
+
+    # ------------------------------------------------------------------
+    # Phase 2: Advanced Clip Operations
+    # ------------------------------------------------------------------
+
+    def _crop_clip(self, track_index, clip_index):
+        """Trim clip to its loop region"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            if not hasattr(clip, 'crop'):
+                raise Exception("clip.crop() not available in this Live version")
+            clip.crop()
+            return {
+                "cropped": True,
+                "new_length": clip.length,
+                "clip_name": clip.name,
+            }
+        except Exception as e:
+            self.log_message("Error cropping clip: " + str(e))
+            raise
+
+    def _duplicate_clip_loop(self, track_index, clip_index):
+        """Double the loop content of a clip"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            if not hasattr(clip, 'duplicate_loop'):
+                raise Exception("clip.duplicate_loop() not available in this Live version")
+            old_length = clip.length
+            clip.duplicate_loop()
+            return {
+                "old_length": old_length,
+                "new_length": clip.length,
+                "clip_name": clip.name,
+            }
+        except Exception as e:
+            self.log_message("Error duplicating clip loop: " + str(e))
+            raise
+
+    def _set_clip_start_end(self, track_index, clip_index, start_marker, end_marker):
+        """Set clip start_marker and end_marker"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            if start_marker is not None:
+                clip.start_marker = float(start_marker)
+            if end_marker is not None:
+                clip.end_marker = float(end_marker)
+            return {
+                "start_marker": clip.start_marker,
+                "end_marker": clip.end_marker,
+                "clip_name": clip.name,
+            }
+        except Exception as e:
+            self.log_message("Error setting clip start/end: " + str(e))
+            raise
+
+    # ------------------------------------------------------------------
+    # Phase 3: Advanced MIDI Note Editing
+    # ------------------------------------------------------------------
+
+    def _add_notes_extended(self, track_index, clip_index, notes):
+        """Add MIDI notes with Live 11+ extended properties"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            if not hasattr(clip, 'get_notes'):
+                raise Exception("Clip is not a MIDI clip")
+
+            # Try Live 11+ add_new_notes API
+            if hasattr(clip, 'add_new_notes'):
+                from collections import namedtuple
+                # Live 11+ uses a specific notes format
+                note_specs = []
+                for n in notes:
+                    spec = {
+                        "pitch": max(0, min(127, int(n.get("pitch", 60)))),
+                        "start_time": max(0.0, float(n.get("start_time", 0.0))),
+                        "duration": max(0.01, float(n.get("duration", 0.25))),
+                        "velocity": max(1, min(127, float(n.get("velocity", 100)))),
+                        "mute": bool(n.get("mute", False)),
+                    }
+                    # Extended properties
+                    if "probability" in n:
+                        spec["probability"] = max(0.0, min(1.0, float(n["probability"])))
+                    if "velocity_deviation" in n:
+                        spec["velocity_deviation"] = max(-127.0, min(127.0, float(n["velocity_deviation"])))
+                    if "release_velocity" in n:
+                        spec["release_velocity"] = max(0, min(127, int(n["release_velocity"])))
+                    note_specs.append(spec)
+
+                # Use add_new_notes with the extended format
+                clip.begin_undo_step()
+                try:
+                    clip.add_new_notes(tuple([
+                        {
+                            "pitch": s["pitch"],
+                            "start_time": s["start_time"],
+                            "duration": s["duration"],
+                            "velocity": s["velocity"],
+                            "mute": s["mute"],
+                            "probability": s.get("probability", 1.0),
+                            "velocity_deviation": s.get("velocity_deviation", 0.0),
+                            "release_velocity": s.get("release_velocity", 64),
+                        } for s in note_specs
+                    ]))
+                except Exception:
+                    # If add_new_notes fails with dict format, try legacy
+                    live_notes = []
+                    for s in note_specs:
+                        live_notes.append((s["pitch"], s["start_time"], s["duration"], int(s["velocity"]), s["mute"]))
+                    clip.set_notes(tuple(live_notes))
+                finally:
+                    clip.end_undo_step()
+
+                return {"note_count": len(note_specs), "extended": True}
+            else:
+                # Legacy fallback
+                live_notes = []
+                for n in notes:
+                    pitch = max(0, min(127, int(n.get("pitch", 60))))
+                    start_time = max(0.0, float(n.get("start_time", 0.0)))
+                    duration = max(0.01, float(n.get("duration", 0.25)))
+                    velocity = max(1, min(127, int(n.get("velocity", 100))))
+                    mute = bool(n.get("mute", False))
+                    live_notes.append((pitch, start_time, duration, velocity, mute))
+                clip.set_notes(tuple(live_notes))
+                return {"note_count": len(live_notes), "extended": False}
+        except Exception as e:
+            self.log_message("Error adding extended notes: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_notes_extended(self, track_index, clip_index, start_time, time_span):
+        """Get MIDI notes with Live 11+ extended properties"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            if not hasattr(clip, 'get_notes'):
+                raise Exception("Clip is not a MIDI clip")
+
+            actual_time_span = time_span if time_span > 0 else clip.length
+
+            # Try Live 11+ get_notes_extended
+            if hasattr(clip, 'get_notes_extended'):
+                try:
+                    raw_notes = clip.get_notes_extended(
+                        from_time=start_time,
+                        from_pitch=0,
+                        time_span=actual_time_span,
+                        pitch_span=128
+                    )
+                    notes = []
+                    for note in raw_notes:
+                        note_dict = {
+                            "pitch": note.pitch if hasattr(note, 'pitch') else note[0],
+                            "start_time": note.start_time if hasattr(note, 'start_time') else note[1],
+                            "duration": note.duration if hasattr(note, 'duration') else note[2],
+                            "velocity": note.velocity if hasattr(note, 'velocity') else note[3],
+                            "mute": note.mute if hasattr(note, 'mute') else (note[4] if len(note) > 4 else False),
+                        }
+                        # Extended properties
+                        if hasattr(note, 'probability'):
+                            note_dict["probability"] = note.probability
+                        if hasattr(note, 'velocity_deviation'):
+                            note_dict["velocity_deviation"] = note.velocity_deviation
+                        if hasattr(note, 'release_velocity'):
+                            note_dict["release_velocity"] = note.release_velocity
+                        notes.append(note_dict)
+                    return {
+                        "clip_name": clip.name,
+                        "clip_length": clip.length,
+                        "note_count": len(notes),
+                        "extended": True,
+                        "notes": notes,
+                    }
+                except Exception:
+                    pass  # Fall through to legacy
+
+            # Legacy fallback
+            notes_tuple = clip.get_notes(start_time, 0, actual_time_span, 128)
+            notes = []
+            for note in notes_tuple:
+                notes.append({
+                    "pitch": note[0],
+                    "start_time": note[1],
+                    "duration": note[2],
+                    "velocity": note[3],
+                    "mute": note[4] if len(note) > 4 else False,
+                })
+            return {
+                "clip_name": clip.name,
+                "clip_length": clip.length,
+                "note_count": len(notes),
+                "extended": False,
+                "notes": notes,
+            }
+        except Exception as e:
+            self.log_message("Error getting extended notes: " + str(e))
+            raise
+
+    def _remove_notes_range(self, track_index, clip_index, from_time, time_span, from_pitch, pitch_span):
+        """Remove notes within a specific time and pitch range"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            if not hasattr(clip, 'get_notes'):
+                raise Exception("Clip is not a MIDI clip")
+
+            # Count notes before removal
+            before = clip.get_notes(from_time, from_pitch, time_span, pitch_span)
+            count_before = len(before)
+
+            if hasattr(clip, 'remove_notes_extended'):
+                clip.remove_notes_extended(
+                    from_time=from_time,
+                    from_pitch=from_pitch,
+                    time_span=time_span,
+                    pitch_span=pitch_span
+                )
+            else:
+                clip.remove_notes(from_time, from_pitch, time_span, pitch_span)
+
+            return {
+                "removed": True,
+                "notes_removed": count_before,
+                "from_time": from_time,
+                "time_span": time_span,
+                "from_pitch": from_pitch,
+                "pitch_span": pitch_span,
+            }
+        except Exception as e:
+            self.log_message("Error removing notes range: " + str(e))
+            raise
+
+    # ------------------------------------------------------------------
+    # Phase 4: Automation Reading & Editing
+    # ------------------------------------------------------------------
+
+    def _get_clip_automation(self, track_index, clip_index, parameter_name):
+        """Read automation envelope from a clip"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            param = self._find_parameter(track_index, parameter_name)
+
+            if not hasattr(clip, 'automation_envelope'):
+                return {"has_automation": False, "parameter": parameter_name, "reason": "Clip does not support automation envelopes"}
+
+            envelope = clip.automation_envelope(param)
+            if envelope is None:
+                return {"has_automation": False, "parameter": parameter_name}
+
+            # Sample the envelope at evenly-spaced points
+            num_samples = 64
+            clip_len = clip.length
+            if clip_len <= 0:
+                return {"has_automation": False, "parameter": parameter_name, "reason": "Clip has zero length"}
+
+            points = []
+            step = clip_len / num_samples
+            for i in range(num_samples + 1):
+                t = i * step
+                try:
+                    val = envelope.value_at_time(t)
+                    points.append({"time": round(t, 4), "value": round(val, 4)})
+                except Exception:
+                    pass
+
+            return {
+                "has_automation": True,
+                "parameter": parameter_name,
+                "param_min": param.min,
+                "param_max": param.max,
+                "clip_length": clip_len,
+                "point_count": len(points),
+                "points": points,
+            }
+        except Exception as e:
+            self.log_message("Error getting clip automation: " + str(e))
+            raise
+
+    def _clear_clip_automation(self, track_index, clip_index, parameter_name):
+        """Clear automation for a specific parameter in a clip"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+            param = self._find_parameter(track_index, parameter_name)
+
+            if not hasattr(clip, 'automation_envelope'):
+                raise Exception("Clip does not support automation envelopes")
+
+            envelope = clip.automation_envelope(param)
+            if envelope is None:
+                return {"cleared": False, "parameter": parameter_name, "reason": "No automation envelope found"}
+
+            if hasattr(envelope, 'clear'):
+                envelope.clear()
+                return {"cleared": True, "parameter": parameter_name}
+            else:
+                raise Exception("Envelope does not support clear()")
+        except Exception as e:
+            self.log_message("Error clearing clip automation: " + str(e))
+            raise
+
+    def _list_clip_automated_params(self, track_index, clip_index):
+        """List all parameters that have automation in a clip"""
+        try:
+            clip = self._get_clip(track_index, clip_index)
+
+            if not hasattr(clip, 'automation_envelope'):
+                return {"automated_parameters": [], "count": 0, "reason": "Clip does not support automation envelopes"}
+
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+
+            automated = []
+
+            # Check mixer parameters
+            for name, param in [("Volume", track.mixer_device.volume), ("Pan", track.mixer_device.panning)]:
+                try:
+                    env = clip.automation_envelope(param)
+                    if env is not None:
+                        automated.append({"name": name, "source": "Mixer"})
+                except Exception:
+                    pass
+
+            # Check send parameters
+            for i, send in enumerate(track.mixer_device.sends):
+                try:
+                    env = clip.automation_envelope(send)
+                    if env is not None:
+                        automated.append({"name": "Send " + chr(65 + i), "source": "Mixer"})
+                except Exception:
+                    pass
+
+            # Check device parameters
+            for dev_idx, device in enumerate(track.devices):
+                for param in device.parameters:
+                    try:
+                        env = clip.automation_envelope(param)
+                        if env is not None:
+                            automated.append({
+                                "name": param.name,
+                                "source": device.name,
+                                "device_index": dev_idx,
+                            })
+                    except Exception:
+                        pass
+
+            return {"automated_parameters": automated, "count": len(automated)}
+        except Exception as e:
+            self.log_message("Error listing automated params: " + str(e))
             raise

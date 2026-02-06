@@ -2317,6 +2317,385 @@ def create_clip_automation(ctx: Context, track_index: int, clip_index: int,
         logger.error(f"Error creating clip automation: {str(e)}")
         return "Error creating clip automation. Please check the server logs for details."
 
+# ======================================================================
+# Arrangement View Workflow
+# ======================================================================
+
+@mcp.tool()
+def get_song_transport(ctx: Context) -> str:
+    """
+    Get the current transport/arrangement state of the Ableton session.
+
+    Returns: current playback time, playing state, tempo, time signature,
+    loop bracket settings, record mode, and song length.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_song_transport", {})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting song transport: {str(e)}")
+        return "Error getting song transport. Please check the server logs for details."
+
+@mcp.tool()
+def set_song_time(ctx: Context, time: float) -> str:
+    """
+    Set the playback position (arrangement playhead).
+
+    Parameters:
+    - time: The position in beats to jump to (0.0 = start of song)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_song_time", {"time": time})
+        return f"Playhead set to beat {result.get('current_time', time)}"
+    except Exception as e:
+        logger.error(f"Error setting song time: {str(e)}")
+        return "Error setting song time. Please check the server logs for details."
+
+@mcp.tool()
+def set_song_loop(ctx: Context, enabled: bool = None, start: float = None, length: float = None) -> str:
+    """
+    Control the arrangement loop bracket.
+
+    Parameters:
+    - enabled: True to enable looping, False to disable (optional)
+    - start: Loop start position in beats (optional)
+    - length: Loop length in beats (optional)
+    """
+    try:
+        params = {}
+        if enabled is not None:
+            params["enabled"] = enabled
+        if start is not None:
+            params["start"] = start
+        if length is not None:
+            params["length"] = length
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_song_loop", params)
+        state = "enabled" if result.get("loop_enabled") else "disabled"
+        return f"Loop {state}: start={result.get('loop_start', 0)}, length={result.get('loop_length', 0)} beats"
+    except Exception as e:
+        logger.error(f"Error setting song loop: {str(e)}")
+        return "Error setting song loop. Please check the server logs for details."
+
+@mcp.tool()
+def duplicate_clip_to_arrangement(ctx: Context, track_index: int, clip_index: int, time: float) -> str:
+    """
+    Copy a session clip to the arrangement timeline at a given beat position.
+
+    This is the primary arrangement workflow tool — build clips in session view,
+    then place them on the arrangement timeline.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - time: The beat position on the arrangement timeline to place the clip
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("duplicate_clip_to_arrangement", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "time": time,
+        })
+        return (f"Placed clip '{result.get('clip_name', '')}' on arrangement at beat {result.get('placed_at', time)} "
+                f"(track {track_index}, length {result.get('clip_length', '?')} beats)")
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error duplicating clip to arrangement: {str(e)}")
+        return "Error duplicating clip to arrangement. Please check the server logs for details."
+
+# ======================================================================
+# Advanced Clip Operations
+# ======================================================================
+
+@mcp.tool()
+def crop_clip(ctx: Context, track_index: int, clip_index: int) -> str:
+    """
+    Trim a clip to its current loop region, discarding content outside.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("crop_clip", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+        })
+        return f"Cropped clip '{result.get('clip_name', '')}' — new length: {result.get('new_length', '?')} beats"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error cropping clip: {str(e)}")
+        return "Error cropping clip. Please check the server logs for details."
+
+@mcp.tool()
+def duplicate_clip_loop(ctx: Context, track_index: int, clip_index: int) -> str:
+    """
+    Double the loop content of a clip (e.g., 4 bars becomes 8 bars with content repeated).
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("duplicate_clip_loop", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+        })
+        return (f"Doubled loop of clip '{result.get('clip_name', '')}' — "
+                f"{result.get('old_length', '?')} → {result.get('new_length', '?')} beats")
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error duplicating clip loop: {str(e)}")
+        return "Error duplicating clip loop. Please check the server logs for details."
+
+@mcp.tool()
+def set_clip_start_end(ctx: Context, track_index: int, clip_index: int,
+                       start_marker: float = None, end_marker: float = None) -> str:
+    """
+    Set clip start_marker and end_marker positions (controls playback region without changing notes).
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - start_marker: The new start marker position in beats (optional)
+    - end_marker: The new end marker position in beats (optional)
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        params = {"track_index": track_index, "clip_index": clip_index}
+        if start_marker is not None:
+            params["start_marker"] = start_marker
+        if end_marker is not None:
+            params["end_marker"] = end_marker
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_start_end", params)
+        return (f"Clip '{result.get('clip_name', '')}' markers set — "
+                f"start: {result.get('start_marker', '?')}, end: {result.get('end_marker', '?')}")
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error setting clip start/end: {str(e)}")
+        return "Error setting clip start/end markers. Please check the server logs for details."
+
+# ======================================================================
+# Advanced MIDI Note Editing
+# ======================================================================
+
+@mcp.tool()
+def add_notes_extended(ctx: Context, track_index: int, clip_index: int,
+                       notes: List[Dict]) -> str:
+    """
+    Add MIDI notes with Live 11+ extended properties.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - notes: List of note dictionaries with:
+        - pitch (int): MIDI note number (0-127)
+        - start_time (float): Start position in beats
+        - duration (float): Note duration in beats
+        - velocity (int): Note velocity (1-127)
+        - mute (bool): Whether the note is muted (optional, default false)
+        - probability (float): Note trigger probability 0.0-1.0 (Live 11+, optional)
+        - velocity_deviation (float): Random velocity range -127 to 127 (Live 11+, optional)
+        - release_velocity (int): Note release velocity 0-127 (Live 11+, optional)
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        if not notes:
+            return "No notes provided"
+        ableton = get_ableton_connection()
+        result = ableton.send_command("add_notes_extended", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "notes": notes,
+        })
+        ext = " (with extended properties)" if result.get("extended") else ""
+        return f"Added {result.get('note_count', 0)} notes to clip{ext}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error adding extended notes: {str(e)}")
+        return "Error adding extended notes. Please check the server logs for details."
+
+@mcp.tool()
+def get_notes_extended(ctx: Context, track_index: int, clip_index: int,
+                       start_time: float = 0.0, time_span: float = 0.0) -> str:
+    """
+    Get MIDI notes with Live 11+ extended properties (probability, velocity_deviation, release_velocity).
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - start_time: Start time in beats (default: 0.0)
+    - time_span: Duration in beats to retrieve (default: 0.0 = entire clip)
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_notes_extended", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "start_time": start_time,
+            "time_span": time_span,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error getting extended notes: {str(e)}")
+        return "Error getting extended notes. Please check the server logs for details."
+
+@mcp.tool()
+def remove_notes_range(ctx: Context, track_index: int, clip_index: int,
+                       from_time: float = 0.0, time_span: float = 0.0,
+                       from_pitch: int = 0, pitch_span: int = 128) -> str:
+    """
+    Selectively remove MIDI notes within a specific time and pitch range.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - from_time: Start time in beats (default: 0.0)
+    - time_span: Time range in beats (default: 0.0 = entire clip)
+    - from_pitch: Lowest MIDI pitch to remove (default: 0)
+    - pitch_span: Range of pitches to remove (default: 128 = all)
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("remove_notes_range", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "from_time": from_time,
+            "time_span": time_span,
+            "from_pitch": from_pitch,
+            "pitch_span": pitch_span,
+        })
+        return f"Removed {result.get('notes_removed', 0)} notes from range (time={from_time}-{from_time+time_span}, pitch={from_pitch}-{from_pitch+pitch_span})"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error removing notes range: {str(e)}")
+        return "Error removing notes range. Please check the server logs for details."
+
+# ======================================================================
+# Automation Reading & Editing
+# ======================================================================
+
+@mcp.tool()
+def get_clip_automation(ctx: Context, track_index: int, clip_index: int,
+                        parameter_name: str) -> str:
+    """
+    Read existing automation from a clip for a specific parameter.
+
+    Samples the automation envelope at 64 evenly-spaced points across the clip length.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - parameter_name: Name of the parameter (e.g., "Volume", "Pan", or any device parameter name)
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_clip_automation", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "parameter_name": parameter_name,
+        })
+        if not result.get("has_automation"):
+            reason = result.get("reason", "No automation found")
+            return f"No automation for '{parameter_name}': {reason}"
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error getting clip automation: {str(e)}")
+        return "Error getting clip automation. Please check the server logs for details."
+
+@mcp.tool()
+def clear_clip_automation(ctx: Context, track_index: int, clip_index: int,
+                          parameter_name: str) -> str:
+    """
+    Clear automation for a specific parameter in a clip.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    - parameter_name: Name of the parameter to clear automation for
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("clear_clip_automation", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "parameter_name": parameter_name,
+        })
+        if result.get("cleared"):
+            return f"Cleared automation for '{parameter_name}'"
+        return f"Could not clear automation for '{parameter_name}': {result.get('reason', 'Unknown')}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error clearing clip automation: {str(e)}")
+        return "Error clearing clip automation. Please check the server logs for details."
+
+@mcp.tool()
+def list_clip_automated_parameters(ctx: Context, track_index: int, clip_index: int) -> str:
+    """
+    List all parameters that have automation in a given clip.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the clip
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("list_clip_automated_params", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+        })
+        params = result.get("automated_parameters", [])
+        if not params:
+            return "No automated parameters found in this clip"
+        output = f"Found {len(params)} automated parameter(s):\n\n"
+        for p in params:
+            source = p.get("source", "Unknown")
+            output += f"• {p.get('name', '?')} (source: {source})"
+            if "device_index" in p:
+                output += f" [device {p['device_index']}]"
+            output += "\n"
+        return output
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error listing automated parameters: {str(e)}")
+        return "Error listing automated parameters. Please check the server logs for details."
+
 @mcp.tool()
 def search_browser(ctx: Context, query: str, category: str = "all") -> str:
     """
