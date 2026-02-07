@@ -36,6 +36,60 @@ def get_device_type(device, ctrl=None):
         return "unknown"
 
 
+def _resolve_display_value_bruteforce(param, display_string):
+    """For non-quantized params, find the raw value that produces a display string.
+
+    Iterates integer values in [min..max], checks param.str_for_value(v).
+    Works for params like LFO Rate (0-21) where each integer = a note value.
+    """
+    target = display_string.strip()
+    target_lower = target.lower()
+
+    lo = int(param.min)
+    hi = int(param.max)
+    for v in range(lo, hi + 1):
+        try:
+            disp = param.str_for_value(float(v))
+            if disp is None:
+                continue
+            disp = disp.strip()
+            if disp == target or disp.lower() == target_lower:
+                return float(v)
+        except Exception:
+            continue
+
+    raise ValueError("'{0}' not matched for '{1}' (range {2}-{3})".format(
+        display_string, param.name, param.min, param.max
+    ))
+
+
+def _resolve_display_value(param, display_string):
+    """Resolve a display string to its raw value.
+
+    For quantized params with value_items: direct lookup (fast).
+    For non-quantized params: brute-force str_for_value scan.
+    """
+    # Fast path: quantized with value_items
+    if param.is_quantized:
+        items = list(param.value_items)
+        if items:
+            num = len(items)
+            step = (param.max - param.min) / max(num - 1, 1)
+            for i, item in enumerate(items):
+                if item == display_string:
+                    return param.min + i * step
+            lower = display_string.lower()
+            for i, item in enumerate(items):
+                if item.lower() == lower:
+                    return param.min + i * step
+            raise ValueError("'{0}' not found in value_items for '{1}'. Options: {2}".format(
+                display_string, param.name, ", ".join(items)
+            ))
+
+    # Non-quantized: brute-force via str_for_value
+    return _resolve_display_value_bruteforce(param, display_string)
+
+
 def get_device_parameters(song, track_index, device_index, track_type="track", ctrl=None):
     """Get all parameters for a device on any track type."""
     try:
@@ -53,7 +107,7 @@ def get_device_parameters(song, track_index, device_index, track_type="track", c
 
         parameters = []
         for i, param in enumerate(device.parameters):
-            parameters.append({
+            param_info = {
                 "index": i,
                 "name": param.name,
                 "value": param.value,
@@ -61,7 +115,12 @@ def get_device_parameters(song, track_index, device_index, track_type="track", c
                 "max": param.max,
                 "is_quantized": param.is_quantized,
                 "value_items": list(param.value_items) if param.is_quantized else [],
-            })
+            }
+            try:
+                param_info["display_value"] = param.str_for_value(param.value)
+            except Exception:
+                pass
+            parameters.append(param_info)
 
         return {
             "device_name": device.name,
@@ -75,9 +134,14 @@ def get_device_parameters(song, track_index, device_index, track_type="track", c
 
 
 def set_device_parameter(
-    song, track_index, device_index, parameter_name, value, track_type="track", ctrl=None
+    song, track_index, device_index, parameter_name, value,
+    track_type="track", value_display=None, ctrl=None
 ):
-    """Set a device parameter by name on any track type."""
+    """Set a device parameter by name on any track type.
+
+    value_display: optional display string (e.g. '1/4') for quantized params.
+    If provided, overrides the numeric value.
+    """
     try:
         track = resolve_track(song, track_index, track_type)
         device_list = list(track.devices)
@@ -97,17 +161,30 @@ def set_device_parameter(
                 parameter_name, device.name
             ))
 
+        # Resolve display string to raw value if provided
+        if value_display is not None:
+            value = _resolve_display_value(target_param, value_display)
+
         # Clamp value to valid range
         clamped = max(target_param.min, min(target_param.max, value))
         target_param.value = clamped
 
-        return {
+        display = None
+        try:
+            display = target_param.str_for_value(target_param.value)
+        except Exception:
+            pass
+
+        result = {
             "device_name": device.name,
             "parameter_name": target_param.name,
             "value": target_param.value,
             "clamped": clamped != value,
             "track_type": track_type,
         }
+        if display is not None:
+            result["display_value"] = display
+        return result
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error setting device parameter: " + str(e))
@@ -117,7 +194,11 @@ def set_device_parameter(
 def set_device_parameters_batch(
     song, track_index, device_index, parameters, track_type="track", ctrl=None
 ):
-    """Set multiple device parameters at once. parameters is a list of {name, value} dicts."""
+    """Set multiple device parameters at once.
+
+    parameters is a list of dicts with 'name' and either 'value' (numeric)
+    or 'value_display' (display string like '1/4') for quantized params.
+    """
     try:
         track = resolve_track(song, track_index, track_type)
         device_list = list(track.devices)
@@ -134,13 +215,26 @@ def set_device_parameters_batch(
         for entry in parameters:
             pname = entry.get("name", "")
             pvalue = entry.get("value", 0.0)
+            value_display = entry.get("value_display")
             target = param_map.get(pname)
             if target is None:
                 results.append({"name": pname, "error": "not found"})
                 continue
+            # Resolve display string if provided
+            if value_display is not None:
+                try:
+                    pvalue = _resolve_display_value(target, value_display)
+                except ValueError as ve:
+                    results.append({"name": pname, "error": str(ve)})
+                    continue
             clamped = max(target.min, min(target.max, pvalue))
             target.value = clamped
-            results.append({"name": target.name, "value": target.value, "clamped": clamped != pvalue})
+            entry_result = {"name": target.name, "value": target.value, "clamped": clamped != pvalue}
+            try:
+                entry_result["display_value"] = target.str_for_value(target.value)
+            except Exception:
+                pass
+            results.append(entry_result)
 
         return {
             "device_name": device.name,

@@ -6,7 +6,7 @@ import logging
 import time
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List, Union
+from typing import AsyncIterator, Dict, Any, List, Optional, Union
 import uuid
 import base64
 import struct
@@ -105,7 +105,7 @@ class AbletonConnection:
     _MODIFYING_COMMANDS = frozenset([
         "create_midi_track", "create_audio_track", "set_track_name",
         "create_clip", "add_notes_to_clip", "set_clip_name",
-        "set_tempo", "fire_clip", "stop_clip", "set_device_parameter",
+        "set_tempo", "fire_clip", "stop_clip", "set_device_parameter", "set_device_parameters_batch",
         "start_playback", "stop_playback", "load_instrument_or_effect",
         "load_sample", "load_drum_kit",
         "arm_track", "disarm_track", "set_arrangement_overdub",
@@ -499,20 +499,31 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 
         # Pre-populate browser cache in background (so search_browser is instant)
         def _browser_cache_warmup():
-            """Background thread: load disk cache instantly, then refresh from Ableton."""
+            """Background thread: load disk cache instantly, then refresh user categories only."""
             # Step 1: Load from disk (instant, works even before Ableton connects)
             disk_loaded = _load_browser_cache_from_disk()
             if disk_loaded:
-                logger.info("Browser cache ready from disk (background refresh will follow)")
+                # Check if user cache needs refresh
+                with _browser_cache_lock:
+                    has_user = any(cat in _browser_cache_by_category
+                                  for _, cat in _BROWSER_CATEGORIES_USER)
+                if has_user:
+                    user_age = _get_user_cache_age()
+                    if user_age < 43200:  # 12 hours
+                        logger.info("Browser cache ready (user cache %.0f min old, skipping rescan)", user_age / 60)
+                        return
+                    logger.info("User cache stale (%.1f hrs), will rescan user categories only", user_age / 3600)
+                else:
+                    logger.info("No user cache found, will scan Plug-ins & User Library")
 
-            # Step 2: Wait for Ableton, then do a live scan to refresh
+            # Step 2: Wait for Ableton, then scan user categories only
             time.sleep(5)  # let Ableton & Remote Script fully settle
             for _ in range(20):  # poll up to 10s more for Ableton connection
                 if _ableton_connection and _ableton_connection.sock:
                     break
                 time.sleep(0.5)
             try:
-                _populate_browser_cache()
+                _populate_browser_cache(categories=_BROWSER_CATEGORIES_USER)
             except Exception as e:
                 logger.warning("Browser cache warmup failed: %s", e)
 
@@ -671,8 +682,10 @@ _BROWSER_CACHE_TTL = 300.0  # 5 minutes
 _browser_cache_lock = threading.Lock()
 _browser_cache_populating = False  # prevents duplicate scans
 _BROWSER_DISK_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".ableton-mcp")
-_BROWSER_DISK_CACHE_PATH = os.path.join(_BROWSER_DISK_CACHE_DIR, "browser_cache.json")
-_BROWSER_DISK_CACHE_MAX_AGE = 86400.0  # 24 hours — disk cache ignored if older
+_BROWSER_DISK_CACHE_STOCK_PATH = os.path.join(_BROWSER_DISK_CACHE_DIR, "browser_cache_stock.json")
+_BROWSER_DISK_CACHE_USER_PATH = os.path.join(_BROWSER_DISK_CACHE_DIR, "browser_cache_user.json")
+_BROWSER_DISK_CACHE_PATH = os.path.join(_BROWSER_DISK_CACHE_DIR, "browser_cache.json")  # legacy, for migration
+_BROWSER_DISK_CACHE_MAX_AGE = 86400.0  # 24 hours — user cache ignored if older
 
 # Dynamic device URI map — built from browser cache after each scan.
 # Maps lowercase device name -> correct URI from Ableton's LOM.
@@ -697,15 +710,23 @@ _CATEGORY_PRIORITY: Dict[str, int] = {
 # Root browser categories: (path_root, display_name)
 # path_root uses the lowercase attribute name so paths work directly with
 # get_browser_items_at_path (which lowercases the first component).
-_BROWSER_CATEGORIES = [
+#
+# Stock = Ableton's built-in content (never changes, never rescanned).
+# User  = 3rd-party plug-ins & user library (may change, rescanned periodically).
+_BROWSER_CATEGORIES_STOCK = [
     ("instruments", "Instruments"),
     ("drums", "Drums"),
     ("audio_effects", "Audio Effects"),
     ("midi_effects", "MIDI Effects"),
     ("max_for_live", "Max for Live"),
+]
+
+_BROWSER_CATEGORIES_USER = [
     ("plugins", "Plug-ins"),
     ("user_library", "User Library"),
 ]
+
+_BROWSER_CATEGORIES = _BROWSER_CATEGORIES_STOCK + _BROWSER_CATEGORIES_USER
 
 _BROWSER_CACHE_MAX_DEPTH = 3   # category/device/subcategory (skip preset files)
 _BROWSER_CACHE_MAX_ITEMS = 1500
@@ -755,92 +776,262 @@ def _build_device_uri_map(flat_items: List[Dict[str, Any]]) -> Dict[str, str]:
     return uri_map
 
 
-def _save_browser_cache_to_disk() -> bool:
-    """Persist the in-memory browser cache to a JSON file on disk."""
+def _try_load_cache_file(path: str, label: str, check_age: bool = False) -> Optional[Dict[str, Any]]:
+    """Try to load a cache file from disk.
+
+    Returns a dict with 'flat', 'by_category', 'timestamp' on success, or None.
+    If check_age is True, returns None when the file is older than _BROWSER_DISK_CACHE_MAX_AGE.
+    """
     try:
-        with _browser_cache_lock:
-            if not _browser_cache_flat:
-                return False
-            data = {
-                "version": 1,
-                "timestamp": _browser_cache_timestamp,
-                "flat": _browser_cache_flat,
-                "by_category": _browser_cache_by_category,
-                "device_uri_map": _device_uri_map,
-            }
+        if not os.path.exists(path):
+            return None
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict) or data.get("version") != 1:
+            logger.warning("%s has unknown format, skipping", label)
+            return None
+
+        flat = data.get("flat", [])
+        by_cat = data.get("by_category", {})
+        disk_timestamp = data.get("timestamp", 0.0)
+
+        if not flat:
+            return None
+
+        if check_age:
+            age = time.time() - disk_timestamp
+            if age > _BROWSER_DISK_CACHE_MAX_AGE:
+                logger.info("%s is %.1f hours old (max %.1f), skipping",
+                            label, age / 3600, _BROWSER_DISK_CACHE_MAX_AGE / 3600)
+                return None
+
+        logger.info("Loaded %s: %d items, %d categories (%.1f min old)",
+                    label, len(flat), len(by_cat), (time.time() - disk_timestamp) / 60)
+        return {"flat": flat, "by_category": by_cat, "timestamp": disk_timestamp}
+
+    except Exception as e:
+        logger.warning("Failed to load %s: %s", label, e)
+        return None
+
+
+def _write_cache_file(path: str, flat: list, by_cat: dict, timestamp: float) -> bool:
+    """Atomically write a cache tier to disk.
+
+    For the stock cache file, refuses to overwrite with fewer items than
+    the existing file (protects against partial-scan corruption).
+    """
+    try:
+        # Protect stock cache from being overwritten with fewer items
+        if path == _BROWSER_DISK_CACHE_STOCK_PATH:
+            try:
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        old = json.load(f)
+                    old_count = len(old.get("flat", []))
+                    if len(flat) < old_count:
+                        logger.warning("Skipping stock cache save: new %d < existing %d items",
+                                       len(flat), old_count)
+                        return False
+            except Exception:
+                pass
 
         os.makedirs(_BROWSER_DISK_CACHE_DIR, exist_ok=True)
-        tmp_path = _BROWSER_DISK_CACHE_PATH + ".tmp"
+        data = {
+            "version": 1,
+            "timestamp": timestamp,
+            "flat": flat,
+            "by_category": by_cat,
+        }
+        tmp_path = path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, separators=(",", ":"))
-        os.replace(tmp_path, _BROWSER_DISK_CACHE_PATH)
-        logger.info("Browser cache saved to disk (%d items)", len(data["flat"]))
+        os.replace(tmp_path, path)
+        logger.info("Saved cache to %s (%d items)", os.path.basename(path), len(flat))
         return True
     except Exception as e:
-        logger.warning("Failed to save browser cache to disk: %s", e)
+        logger.warning("Failed to save cache to %s: %s", path, e)
         return False
 
 
-def _load_browser_cache_from_disk() -> bool:
-    """Load browser cache from disk into the in-memory globals.
+def _migrate_old_cache():
+    """Migrate the old single-file browser_cache.json to two-tier stock+user files.
 
-    Returns True if a valid, non-stale disk cache was loaded.
+    Splits items by category, writes to the two new files, then deletes the old file.
+    Only runs once — if the old file exists and the new files don't.
     """
-    global _browser_cache_flat, _browser_cache_by_category, _browser_cache_timestamp, _device_uri_map
+    if not os.path.exists(_BROWSER_DISK_CACHE_PATH):
+        return  # nothing to migrate
+
+    # Don't migrate if new files already exist
+    if os.path.exists(_BROWSER_DISK_CACHE_STOCK_PATH) and os.path.exists(_BROWSER_DISK_CACHE_USER_PATH):
+        # Clean up old file
+        try:
+            os.remove(_BROWSER_DISK_CACHE_PATH)
+            logger.info("Removed legacy browser_cache.json (already migrated)")
+        except Exception:
+            pass
+        return
 
     try:
-        if not os.path.exists(_BROWSER_DISK_CACHE_PATH):
-            logger.info("No disk cache found")
-            return False
-
         with open(_BROWSER_DISK_CACHE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         if not isinstance(data, dict) or data.get("version") != 1:
-            logger.warning("Disk cache has unknown format, ignoring")
-            return False
+            return
 
         flat = data.get("flat", [])
         by_cat = data.get("by_category", {})
-        uri_map = data.get("device_uri_map", {})
-        disk_timestamp = data.get("timestamp", 0.0)
+        ts = data.get("timestamp", 0.0)
 
         if not flat:
-            logger.info("Disk cache is empty, ignoring")
-            return False
+            return
 
-        age = time.time() - disk_timestamp
-        if age > _BROWSER_DISK_CACHE_MAX_AGE:
-            logger.info("Disk cache is %.1f hours old (max %.1f), ignoring",
-                        age / 3600, _BROWSER_DISK_CACHE_MAX_AGE / 3600)
-            return False
+        stock_cat_names = {dn for _, dn in _BROWSER_CATEGORIES_STOCK}
 
-        with _browser_cache_lock:
-            _browser_cache_flat = flat
-            _browser_cache_by_category = by_cat
-            _device_uri_map = uri_map
-            _browser_cache_timestamp = disk_timestamp
+        stock_flat = [i for i in flat if i.get("category") in stock_cat_names]
+        user_flat = [i for i in flat if i.get("category") not in stock_cat_names]
+        stock_by_cat = {k: v for k, v in by_cat.items() if k in stock_cat_names}
+        user_by_cat = {k: v for k, v in by_cat.items() if k not in stock_cat_names}
 
-        logger.info("Loaded browser cache from disk: %d items, %d categories, %d device URIs (%.1f min old)",
-                    len(flat), len(by_cat), len(uri_map), age / 60)
-        return True
+        migrated = False
+        if stock_flat:
+            migrated |= _write_cache_file(_BROWSER_DISK_CACHE_STOCK_PATH, stock_flat, stock_by_cat, ts)
+        if user_flat:
+            migrated |= _write_cache_file(_BROWSER_DISK_CACHE_USER_PATH, user_flat, user_by_cat, ts)
+
+        if migrated:
+            os.remove(_BROWSER_DISK_CACHE_PATH)
+            logger.info("Migrated legacy cache: %d stock + %d user items", len(stock_flat), len(user_flat))
 
     except Exception as e:
-        logger.warning("Failed to load browser cache from disk: %s", e)
+        logger.warning("Failed to migrate old browser cache: %s", e)
+
+
+def _save_browser_cache_to_disk() -> bool:
+    """Persist the in-memory browser cache to separate stock + user JSON files."""
+    stock_cat_names = {dn for _, dn in _BROWSER_CATEGORIES_STOCK}
+
+    with _browser_cache_lock:
+        if not _browser_cache_flat:
+            return False
+        all_items = list(_browser_cache_flat)
+        by_cat = dict(_browser_cache_by_category)
+        ts = _browser_cache_timestamp
+
+    # Split items by tier
+    stock_flat = [i for i in all_items if i.get("category") in stock_cat_names]
+    user_flat = [i for i in all_items if i.get("category") not in stock_cat_names]
+    stock_by_cat = {k: v for k, v in by_cat.items() if k in stock_cat_names}
+    user_by_cat = {k: v for k, v in by_cat.items() if k not in stock_cat_names}
+
+    saved = False
+    if stock_flat:
+        saved |= _write_cache_file(_BROWSER_DISK_CACHE_STOCK_PATH, stock_flat, stock_by_cat, ts)
+    if user_flat:
+        saved |= _write_cache_file(_BROWSER_DISK_CACHE_USER_PATH, user_flat, user_by_cat, ts)
+    return saved
+
+
+def _get_user_cache_age() -> float:
+    """Return age in seconds of the user cache file, or infinity if missing."""
+    try:
+        if os.path.exists(_BROWSER_DISK_CACHE_USER_PATH):
+            with open(_BROWSER_DISK_CACHE_USER_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return time.time() - data.get("timestamp", 0.0)
+    except Exception:
+        pass
+    return float("inf")
+
+
+def _load_browser_cache_from_disk() -> bool:
+    """Load browser cache from disk using two-tier approach.
+
+    Stock tier: loaded from browser_cache_stock.json (or bundled seed), never expires.
+    User tier: loaded from browser_cache_user.json, age-checked (24hr max).
+
+    Migrates old single browser_cache.json on first run.
+    Returns True if any cache was loaded.
+    """
+    global _browser_cache_flat, _browser_cache_by_category, _browser_cache_timestamp, _device_uri_map
+
+    # Migrate old single-file cache to two-tier
+    _migrate_old_cache()
+
+    flat_items: List[Dict[str, Any]] = []
+    by_category: Dict[str, List[Dict[str, Any]]] = {}
+    stock_loaded = False
+    user_loaded = False
+    user_timestamp = 0.0
+
+    # --- Load stock tier (never expires) ---
+    seed_path = os.path.join(os.path.dirname(__file__), "browser_cache_seed.json")
+    for path, label in [
+        (_BROWSER_DISK_CACHE_STOCK_PATH, "stock disk cache"),
+        (seed_path, "bundled seed"),
+    ]:
+        data = _try_load_cache_file(path, label, check_age=False)
+        if data:
+            flat_items.extend(data["flat"])
+            by_category.update(data["by_category"])
+            stock_loaded = True
+            break
+
+    # --- Load user tier (age-checked) ---
+    data = _try_load_cache_file(_BROWSER_DISK_CACHE_USER_PATH, "user disk cache", check_age=True)
+    if data:
+        flat_items.extend(data["flat"])
+        by_category.update(data["by_category"])
+        user_loaded = True
+        user_timestamp = data["timestamp"]
+
+    if not flat_items:
+        logger.info("No browser cache available (first run)")
         return False
 
+    # Build device URI map from merged data
+    device_map = _build_device_uri_map(flat_items)
 
-def _populate_browser_cache(force: bool = False) -> bool:
-    """Scan Ableton's browser tree and cache all items for instant search.
+    # Use user timestamp if available, otherwise use current time (stock-only = fresh enough)
+    effective_timestamp = user_timestamp if user_loaded else time.time()
 
-    Uses a breadth-first walk up to depth 3 across 11 browser categories.
+    with _browser_cache_lock:
+        _browser_cache_flat = flat_items
+        _browser_cache_by_category = by_category
+        _device_uri_map = device_map
+        _browser_cache_timestamp = effective_timestamp
+
+    logger.info("Loaded cache: %d items (%s stock, %s user), %d device URIs",
+                len(flat_items),
+                "with" if stock_loaded else "no",
+                "with" if user_loaded else "no",
+                len(device_map))
+    return True
+
+
+def _populate_browser_cache(force: bool = False, categories=None) -> bool:
+    """Scan Ableton's browser tree and cache items for instant search.
+
+    By default scans all categories.  Pass categories=_BROWSER_CATEGORIES_USER
+    to only scan Plug-ins + User Library (the normal warmup path).
+
+    Uses a breadth-first walk up to depth 3 per category.
     Each command is rate-limited (50ms gap) to avoid overwhelming Ableton's
     socket handler.  Items are capped at 1500 per category.
 
     Uses a **dedicated TCP connection** to avoid corrupting the shared global
     connection when the BFS scan sends many rapid commands.
+
+    Scanned results are **merged** with existing cache — unscanned categories
+    are preserved.  This protects stock content when only user categories are
+    rescanned.
     """
     global _browser_cache_flat, _browser_cache_by_category, _browser_cache_timestamp, _device_uri_map, _browser_cache_populating
+
+    if categories is None:
+        categories = _BROWSER_CATEGORIES
 
     now = time.time()
     with _browser_cache_lock:
@@ -863,12 +1054,13 @@ def _populate_browser_cache(force: bool = False) -> bool:
             logger.warning("Browser cache: cannot connect to Ableton: %s", e)
             return False
 
-        logger.info("Browser cache: starting scan...")
+        cat_names = [dn for _, dn in categories]
+        logger.info("Browser cache: starting scan (%s)...", ", ".join(cat_names))
         flat_items: List[Dict[str, Any]] = []
         by_display: Dict[str, List[Dict[str, Any]]] = {}
         total = 0
 
-        for path_root, display_name in _BROWSER_CATEGORIES:
+        for path_root, display_name in categories:
             category_items: List[Dict[str, Any]] = []
             cat_count = 0
 
@@ -882,14 +1074,21 @@ def _populate_browser_cache(force: bool = False) -> bool:
                     result = ableton.send_command("get_browser_items_at_path", {"path": current_path}, timeout=60.0)
                 except Exception as e:
                     logger.warning("Browser cache: failed to read '%s': %s", current_path, e)
-                    # Try to re-establish connection before continuing
-                    time.sleep(2)
-                    try:
-                        ableton.disconnect()
-                        if not ableton.connect():
-                            logger.warning("Browser cache: lost connection, skipping '%s'", display_name)
-                            break
-                    except Exception:
+                    # Try to re-establish connection with escalating delays
+                    reconnected = False
+                    for retry in range(3):
+                        wait = 5 * (retry + 1)  # 5s, 10s, 15s
+                        logger.info("Browser cache: reconnect attempt %d, waiting %ds...", retry + 1, wait)
+                        time.sleep(wait)
+                        try:
+                            ableton.disconnect()
+                            if ableton.connect():
+                                reconnected = True
+                                logger.info("Browser cache: reconnected on attempt %d", retry + 1)
+                                break
+                        except Exception:
+                            pass
+                    if not reconnected:
                         logger.warning("Browser cache: lost connection, skipping '%s'", display_name)
                         break
                     continue
@@ -931,15 +1130,30 @@ def _populate_browser_cache(force: bool = False) -> bool:
             by_display[display_name] = category_items
             logger.info("Browser cache: '%s' — %d items", display_name, len(category_items))
 
-        device_map = _build_device_uri_map(flat_items)
+        # Merge scanned items with existing cache (don't destroy unscanned categories)
+        scanned_cat_names = {dn for _, dn in categories}
 
         with _browser_cache_lock:
-            _browser_cache_flat = flat_items
-            _browser_cache_by_category = by_display
+            existing_flat = list(_browser_cache_flat)
+            existing_by_cat = dict(_browser_cache_by_category)
+
+        # Keep items from unscanned categories, replace scanned ones
+        merged_flat = [i for i in existing_flat if i.get("category") not in scanned_cat_names]
+        merged_flat.extend(flat_items)
+
+        merged_by_cat = {k: v for k, v in existing_by_cat.items() if k not in scanned_cat_names}
+        merged_by_cat.update(by_display)
+
+        device_map = _build_device_uri_map(merged_flat)
+
+        with _browser_cache_lock:
+            _browser_cache_flat = merged_flat
+            _browser_cache_by_category = merged_by_cat
             _device_uri_map = device_map
             _browser_cache_timestamp = time.time()
 
-        logger.info("Browser cache: %d items, %d categories, %d device names mapped", total, len(by_display), len(device_map))
+        logger.info("Browser cache: scanned %d items (%s), total %d items, %d device names mapped",
+                     total, ", ".join(cat_names), len(merged_flat), len(device_map))
         _save_browser_cache_to_disk()
         return True
 
@@ -2763,7 +2977,7 @@ def get_device_parameters(ctx: Context, track_index: int, device_index: int,
 
 @mcp.tool()
 def set_device_parameter(ctx: Context, track_index: int, device_index: int,
-                          parameter_name: str, value: float,
+                          parameter_name: str, value: str,
                           track_type: str = "track") -> str:
     """
     Set a device parameter value.
@@ -2772,7 +2986,9 @@ def set_device_parameter(ctx: Context, track_index: int, device_index: int,
     - track_index: The index of the track containing the device
     - device_index: The index of the device on the track
     - parameter_name: The name of the parameter to set
-    - value: The new value for the parameter (will be clamped to min/max)
+    - value: The value to set. Can be a number (e.g. 0.5) or a display string
+      for quantized parameters (e.g. "1/4", "Sync", "Bandpass"). Use
+      get_device_parameters to see available display values in value_items.
     - track_type: Type of track: "track" (default), "return", or "master"
     """
     try:
@@ -2781,17 +2997,28 @@ def set_device_parameter(ctx: Context, track_index: int, device_index: int,
         if track_type not in ("track", "return", "master"):
             return "Error: track_type must be 'track', 'return', or 'master'"
         ableton = get_ableton_connection()
-        result = ableton.send_command("set_device_parameter", {
+
+        # Detect if value is numeric or a display string
+        cmd_params = {
             "track_index": track_index,
             "device_index": device_index,
             "parameter_name": parameter_name,
-            "value": value,
             "track_type": track_type,
-        })
+        }
+        try:
+            cmd_params["value"] = float(value)
+        except (ValueError, TypeError):
+            # Display string like "1/4", "Sync", "Bandpass"
+            cmd_params["value"] = 0.0
+            cmd_params["value_display"] = str(value)
+
+        result = ableton.send_command("set_device_parameter", cmd_params)
         pname = result.get('parameter', parameter_name)
+        display = result.get("display_value")
+        display_str = f" ({display})" if display else ""
         if result.get("clamped", False):
-            return f"Set parameter '{pname}' to {result.get('value')} (value was clamped to valid range)"
-        return f"Set parameter '{pname}' to {result.get('value')}"
+            return f"Set parameter '{pname}' to {result.get('value')}{display_str} (value was clamped to valid range)"
+        return f"Set parameter '{pname}' to {result.get('value')}{display_str}"
     except ValueError as e:
         return f"Invalid input: {e}"
     except Exception as e:
@@ -2809,7 +3036,9 @@ def set_device_parameters(ctx: Context, track_index: int, device_index: int,
     Parameters:
     - track_index: The index of the track containing the device
     - device_index: The index of the device on the track
-    - parameters: JSON string of parameter list, e.g. '[{"name": "Filter Freq", "value": 0.5}, {"name": "Resonance", "value": 0.3}]'
+    - parameters: JSON string of parameter list. Each entry needs "name" and either
+      "value" (numeric) or "value_display" (display string for quantized params).
+      e.g. '[{"name": "Filter Freq", "value": 0.5}, {"name": "LFO Rate", "value_display": "1/4"}]'
     - track_type: Type of track: "track" (default), "return", or "master"
     """
     try:
@@ -2823,29 +3052,79 @@ def set_device_parameters(ctx: Context, track_index: int, device_index: int,
             return "Error: parameters must be a non-empty JSON array of {name, value} objects"
 
         ableton = get_ableton_connection()
-        result = ableton.send_command("set_device_parameters_batch", {
-            "track_index": track_index,
-            "device_index": device_index,
-            "parameters": params_list,
-            "track_type": track_type,
-        })
 
-        device_name = result.get("device_name", "?")
-        results = result.get("results", [])
-        ok = [r for r in results if "error" not in r]
-        errs = [r for r in results if "error" in r]
+        # --- Try batch command first (single round-trip) ---
+        try:
+            result = ableton.send_command("set_device_parameters_batch", {
+                "track_index": track_index,
+                "device_index": device_index,
+                "parameters": params_list,
+                "track_type": track_type,
+            })
+            device_name = result.get("device_name", "?")
+            results = result.get("results", [])
+            ok = [r for r in results if "error" not in r]
+            errs = [r for r in results if "error" in r]
+            summary = f"Set {len(ok)} parameters on '{device_name}'"
+            if errs:
+                summary += f" ({len(errs)} not found: {', '.join(r['name'] for r in errs)})"
+            details = []
+            for r in ok:
+                display = r.get("display_value")
+                if display:
+                    details.append(f"  {r['name']}: {r['value']} ({display})")
+                else:
+                    details.append(f"  {r['name']}: {r['value']}")
+            if details:
+                summary += "\n" + "\n".join(details)
+            return summary
+        except Exception as batch_err:
+            logger.warning("Batch set_device_parameters failed, falling back to sequential: %s", batch_err)
 
-        summary = f"Set {len(ok)} parameters on '{device_name}'"
-        if errs:
-            summary += f" ({len(errs)} not found: {', '.join(r['name'] for r in errs)})"
+        # --- Fallback: set parameters one at a time ---
+        ok_count = 0
+        err_names = []
+        details = []
+        device_name = "?"
+        for entry in params_list:
+            pname = entry.get("name", "")
+            pvalue = entry.get("value", 0.0)
+            value_display = entry.get("value_display")
+            cmd_params = {
+                "track_index": track_index,
+                "device_index": device_index,
+                "parameter_name": pname,
+                "value": pvalue,
+                "track_type": track_type,
+            }
+            if value_display is not None:
+                cmd_params["value_display"] = value_display
+            try:
+                result = ableton.send_command("set_device_parameter", cmd_params)
+                device_name = result.get("device_name", device_name)
+                display = result.get("display_value")
+                if display:
+                    details.append(f"  {pname}: {result.get('value')} ({display})")
+                else:
+                    details.append(f"  {pname}: {result.get('value')}")
+                ok_count += 1
+            except Exception:
+                err_names.append(pname)
+
+        summary = f"Set {ok_count} parameters on '{device_name}'"
+        if err_names:
+            summary += f" ({len(err_names)} failed: {', '.join(err_names)})"
+        if details:
+            summary += "\n" + "\n".join(details)
         return summary
+
     except json.JSONDecodeError:
         return "Error: parameters must be a valid JSON array"
     except ValueError as e:
         return f"Invalid input: {e}"
     except Exception as e:
-        logger.error(f"Error in batch set parameters: {str(e)}")
-        return "Error setting device parameters. Please check the server logs for details."
+        logger.error("Error in set_device_parameters: %s", e)
+        return f"Error setting device parameters: {e}"
 
 
 @mcp.tool()
@@ -3370,22 +3649,24 @@ def search_browser(ctx: Context, query: str, category: str = "all") -> str:
         return "Error searching browser. Please check the server logs for details."
 
 @mcp.tool()
-def refresh_browser_cache(ctx: Context) -> str:
+def refresh_browser_cache(ctx: Context, full: bool = False) -> str:
     """
-    Force a refresh of the browser cache.
+    Refresh the browser cache.
 
-    Use this after installing new packs, instruments, or effects so that
-    search_browser can find them. The cache is also auto-refreshed every
-    5 minutes.
+    By default only rescans user content (Plug-ins, User Library) — this is
+    fast and safe.  Set full=True to also rescan all stock Ableton library
+    categories (only needed after installing new Ableton Packs).
     """
     try:
-        success = _populate_browser_cache(force=True)
+        categories = _BROWSER_CATEGORIES if full else _BROWSER_CATEGORIES_USER
+        success = _populate_browser_cache(force=True, categories=categories)
         if success:
             with _browser_cache_lock:
                 count = len(_browser_cache_flat)
                 cats = len(_browser_cache_by_category)
                 devices = len(_device_uri_map)
-            return f"Browser cache refreshed: {count} items across {cats} categories, {devices} device names mapped (saved to disk)"
+            scope = "full" if full else "user content"
+            return f"Browser cache refreshed ({scope}): {count} items across {cats} categories, {devices} device names mapped (saved to disk)"
         return "Failed to refresh browser cache. Make sure Ableton is running."
     except Exception as e:
         logger.error("Error refreshing browser cache: %s", e)

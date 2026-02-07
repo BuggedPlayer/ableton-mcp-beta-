@@ -27,6 +27,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["MCP_Server"]
 
+[tool.setuptools.package-data]
+MCP_Server = ["browser_cache_seed.json"]
+
 [project.urls]
 "Homepage" = "https://github.com/BuggedPlayer/ableton-mcp-beta"
 "Bug Tracker" = "https://github.com/BuggedPlayer/ableton-mcp-beta/issues"

@@ -486,7 +486,7 @@ class AbletonMCP(ControlSurface):
             return handlers.devices.set_device_parameter(
                 song, p.get("track_index", 0), p.get("device_index", 0),
                 p.get("parameter_name", ""), p.get("value", 0.0),
-                p.get("track_type", "track"), ctrl)
+                p.get("track_type", "track"), p.get("value_display"), ctrl)
         elif cmd == "set_device_parameters_batch":
             return handlers.devices.set_device_parameters_batch(
                 song, p.get("track_index", 0), p.get("device_index", 0),
