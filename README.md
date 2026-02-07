@@ -33,12 +33,13 @@ A Python server that implements the Model Context Protocol and bridges between t
 - **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends newline-delimited JSON commands and receives newline-delimited JSON responses. Includes automatic reconnection logic.
 - **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
 
-The server exposes **128 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
+The server exposes **131 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
 
 **Startup sequence:**
 1. Connect to Ableton Remote Script (TCP port 9877)
 2. Auto-connect to M4L bridge (UDP ports 9878/9879) — no need to wait for a tool call
 3. Start the web status dashboard (HTTP port 9880)
+4. Warm up browser cache in background (BFS scan of all 5 browser categories, depth 4, ~10s)
 
 ### 3. Web Status Dashboard (`http://127.0.0.1:9880`)
 A live web dashboard running on a background daemon thread alongside the MCP server. Built with starlette + uvicorn (already installed as transitive deps of `mcp[cli]`, zero new dependencies). Auto-refreshes every 3 seconds.
@@ -55,7 +56,7 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 
 ---
 
-## Complete Tool Reference (128 Tools)
+## Complete Tool Reference (131 Tools)
 
 ### Session & Transport
 
@@ -250,7 +251,8 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 |---|---|---|
 | `get_browser_tree` | `category_type: str = "all"` | Get browser categories (instruments, sounds, drums, audio_effects, midi_effects) |
 | `get_browser_items_at_path` | `path: str` | Get items at a browser path (e.g. "category/folder/subfolder") |
-| `search_browser` | `query: str, category: str = "all"` | Search the browser for items by name |
+| `search_browser` | `query: str, category: str = "all"` | Search the browser for items by name (uses in-memory cache — instant results) |
+| `refresh_browser_cache` | — | Force a full re-scan of Ableton's browser tree (cache auto-refreshes every 5 min) |
 | `load_instrument_or_effect` | `track_index: int, uri: str` | Load an instrument or effect onto a track using its browser URI |
 | `load_sample` | `track_index: int, sample_uri: str` | Load an audio sample onto a track |
 | `load_drum_kit` | `track_index: int, rack_uri: str, kit_path: str` | Load a drum rack with a specific kit |
@@ -437,8 +439,18 @@ The server now automatically connects to the M4L bridge device on startup, right
 
 **Core primitive**: `batch_set_hidden_parameters` sets multiple params reliably via sequential `set_hidden_param` UDP calls with automatic pacing.
 
-### v1.9.0 — Major Expansion (34 New Tools)
+### Cached Browser Tree (v1.9.0)
+The server now pre-scans Ableton's browser tree on startup and caches the results in memory. This eliminates the slow, recursive browser queries that previously caused timeouts when Claude searched for instruments or presets.
 
+- **Background warmup**: 3 seconds after boot, a daemon thread BFS-walks all 5 browser categories (Instruments, Sounds, Drums, Audio Effects, MIDI Effects) up to **depth 4** — deep enough to find individual presets (e.g. `sounds/Operator/Bass/FM Bass`)
+- **Cache size**: up to **5,000 items**, auto-refreshes every **5 minutes**
+- `search_browser` now queries the local cache instead of sending a recursive search to Ableton — **instant results, no more timeouts**
+- `get_browser_tree` returns cached data with URIs, so Claude can load instruments in fewer steps
+- `refresh_browser_cache` forces a full re-scan (useful after installing new packs or instruments)
+
+### v1.9.0 — Major Expansion (37 New Tools)
+
+- **Cached Browser Tree**: `search_browser` now uses an in-memory BFS cache (depth 4, 5000 items, 5-min TTL) — instant results, no more timeouts. New `refresh_browser_cache` tool to force re-scan
 - **ASCII Grid Notation**: `clip_to_grid` / `grid_to_clip` for visual drum/melodic pattern editing
 - **Transport & Recording**: Full transport control — loop info, recording, overdub, metronome, tap tempo, playback position
 - **Bulk Queries**: `get_all_tracks_info` / `get_return_tracks_info` for fast session overview
@@ -447,7 +459,7 @@ The server now automatically connects to the M4L bridge device on startup, right
 - **Arrangement Editing**: `get_arrangement_clips`, `delete_time`, `duplicate_time`, `insert_silence`
 - **Arrangement Automation**: `create_track_automation`, `clear_track_automation`
 - **MIDI & Performance**: `capture_midi`, `apply_groove`, `get_macro_values`
-- Total tools: 94 -> **128** (+34 new tools)
+- Total tools: 94 -> **131** (+37 new tools)
 
 ### v1.8.2 — Batch Hidden Parameter Crash Fix
 

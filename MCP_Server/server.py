@@ -485,6 +485,17 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Dashboard failed to start: {e}")
 
+        # Pre-populate browser cache in background (so search_browser is instant)
+        def _browser_cache_warmup():
+            """Background thread: wait for Ableton connection, then scan browser."""
+            time.sleep(3)  # give Ableton connection time to settle
+            try:
+                _populate_browser_cache()
+            except Exception as e:
+                logger.warning(f"Browser cache warmup failed: {e}")
+
+        threading.Thread(target=_browser_cache_warmup, daemon=True, name="browser-cache-warmup").start()
+
         yield {}
     finally:
         _stop_dashboard_server()
@@ -547,6 +558,120 @@ logging.getLogger().addHandler(_dashboard_log_handler)
 # M4L ping cache (avoids 5s UDP timeout on every dashboard refresh)
 _m4l_ping_cache = {"result": False, "timestamp": 0.0}
 _M4L_PING_CACHE_TTL = 5.0
+
+# Browser cache — scans Ableton's browser tree and caches all items for instant search
+_browser_cache: Dict[str, List[Dict[str, Any]]] = {}  # category -> list of items
+_browser_cache_flat: List[Dict[str, Any]] = []  # flat list for fast substring search
+_browser_cache_timestamp: float = 0.0
+_BROWSER_CACHE_TTL = 300.0  # 5 minutes
+_browser_cache_lock = threading.Lock()
+
+# Root browser categories: (path_root, display_name)
+# path_root uses the lowercase attribute name so paths work directly with
+# get_browser_items_at_path (which lowercases the first component).
+_BROWSER_CATEGORIES = [
+    ("instruments", "Instruments"),
+    ("sounds", "Sounds"),
+    ("drums", "Drums"),
+    ("audio_effects", "Audio Effects"),
+    ("midi_effects", "MIDI Effects"),
+]
+
+_BROWSER_CACHE_MAX_DEPTH = 4   # category/instrument/subfolder/preset
+_BROWSER_CACHE_MAX_ITEMS = 5000
+
+
+def _populate_browser_cache(force: bool = False) -> bool:
+    """Scan Ableton's browser tree and cache all items for instant search.
+
+    Uses a breadth-first walk up to depth 4 so that instrument presets
+    (e.g. sounds/Operator/Bass/FM Bass) are included.  Each level is a
+    single get_browser_items_at_path call which completes well within the
+    socket timeout.  Total items are capped at 5000 to prevent runaway scans.
+    """
+    global _browser_cache, _browser_cache_flat, _browser_cache_timestamp
+
+    now = time.time()
+    with _browser_cache_lock:
+        if not force and _browser_cache_flat and (now - _browser_cache_timestamp) < _BROWSER_CACHE_TTL:
+            return True  # cache is still fresh
+
+    try:
+        ableton = get_ableton_connection()
+    except Exception as e:
+        logger.warning(f"Browser cache: cannot connect to Ableton: {e}")
+        return False
+
+    logger.info("Browser cache: starting scan...")
+    cache_by_category: Dict[str, List[Dict[str, Any]]] = {}
+    flat_items: List[Dict[str, Any]] = []
+    total = 0
+
+    for path_root, display_name in _BROWSER_CATEGORIES:
+        category_items: List[Dict[str, Any]] = []
+
+        # BFS queue: (browser_path, depth)
+        queue: List[tuple] = [(path_root, 0)]
+
+        while queue and total < _BROWSER_CACHE_MAX_ITEMS:
+            current_path, depth = queue.pop(0)
+
+            try:
+                result = ableton.send_command("get_browser_items_at_path", {"path": current_path})
+            except Exception as e:
+                logger.warning(f"Browser cache: failed to read '{current_path}': {e}")
+                continue
+
+            if "error" in result:
+                continue
+
+            for item in result.get("items", []):
+                if total >= _BROWSER_CACHE_MAX_ITEMS:
+                    break
+
+                name = item.get("name", "")
+                if not name:
+                    continue
+
+                item_path = f"{current_path}/{name}"
+                entry = {
+                    "name": name,
+                    "search_name": name.lower(),
+                    "uri": item.get("uri", ""),
+                    "is_loadable": item.get("is_loadable", False),
+                    "is_folder": item.get("is_folder", False),
+                    "is_device": item.get("is_device", False),
+                    "category": display_name,
+                    "path": item_path,
+                }
+                category_items.append(entry)
+                flat_items.append(entry)
+                total += 1
+
+                # Enqueue folders for deeper scanning
+                if item.get("is_folder", False) and depth < _BROWSER_CACHE_MAX_DEPTH:
+                    queue.append((item_path, depth + 1))
+
+        cache_by_category[path_root] = category_items
+        logger.info(f"Browser cache: '{display_name}' — {len(category_items)} items")
+
+    with _browser_cache_lock:
+        _browser_cache = cache_by_category
+        _browser_cache_flat = flat_items
+        _browser_cache_timestamp = time.time()
+
+    logger.info(f"Browser cache: populated with {total} items across {len(cache_by_category)} categories")
+    return True
+
+
+def _get_browser_cache() -> List[Dict[str, Any]]:
+    """Get the flat browser cache, populating if needed."""
+    with _browser_cache_lock:
+        if _browser_cache_flat and (time.time() - _browser_cache_timestamp) < _BROWSER_CACHE_TTL:
+            return _browser_cache_flat
+    _populate_browser_cache()
+    with _browser_cache_lock:
+        return _browser_cache_flat
 
 
 # ---------------------------------------------------------------------------
@@ -2173,26 +2298,67 @@ def set_master_volume(ctx: Context, volume: float) -> str:
 def get_browser_tree(ctx: Context, category_type: str = "all") -> str:
     """
     Get a hierarchical tree of browser categories from Ableton.
-    
+
+    Uses cached browser data when available for richer results with URIs.
+
     Parameters:
     - category_type: Type of categories to get ('all', 'instruments', 'sounds', 'drums', 'audio_effects', 'midi_effects')
     """
     try:
+        # Try to serve from cache first (richer data with URIs)
+        cache = _get_browser_cache()
+        if cache:
+            category_map = {
+                "instruments": "Instruments",
+                "sounds": "Sounds",
+                "drums": "Drums",
+                "audio_effects": "Audio Effects",
+                "midi_effects": "MIDI Effects",
+            }
+
+            # Filter categories
+            if category_type == "all":
+                show_categories = list(category_map.values())
+            else:
+                show_categories = [category_map.get(category_type, category_type)]
+
+            formatted_output = f"Browser tree for '{category_type}':\n\n"
+            for cat_display in show_categories:
+                # Top-level items have paths like "sounds/Operator" (2 segments)
+                top_items = [
+                    item for item in cache
+                    if item.get("category") == cat_display
+                    and item.get("path", "").count("/") == 1
+                ]
+                if not top_items:
+                    continue
+
+                formatted_output += f"**{cat_display}** ({len(top_items)} items):\n"
+                for item in sorted(top_items, key=lambda x: x.get("name", "")):
+                    loadable = " [loadable]" if item.get("is_loadable", False) else ""
+                    folder = " [+]" if item.get("is_folder", False) else ""
+                    formatted_output += f"  • {item['name']}{loadable}{folder}"
+                    if item.get("uri"):
+                        formatted_output += f"  (URI: {item['uri']})"
+                    formatted_output += "\n"
+                formatted_output += "\n"
+
+            return formatted_output
+
+        # Fallback: fetch from Ableton directly
         ableton = get_ableton_connection()
         result = ableton.send_command("get_browser_tree", {
             "category_type": category_type
         })
-        
-        # Check if we got any categories
+
         if "available_categories" in result and len(result.get("categories", [])) == 0:
             available_cats = result.get("available_categories", [])
             return (f"No categories found for '{category_type}'. "
                    f"Available browser categories: {', '.join(available_cats)}")
-        
-        # Format the tree in a more readable way
+
         total_folders = result.get("total_folders", 0)
         formatted_output = f"Browser tree for '{category_type}' (showing {total_folders} folders):\n\n"
-        
+
         def format_tree(item, indent=0):
             output = ""
             if item:
@@ -2200,34 +2366,27 @@ def get_browser_tree(ctx: Context, category_type: str = "all") -> str:
                 name = item.get("name", "Unknown")
                 path = item.get("path", "")
                 has_more = item.get("has_more", False)
-                
-                # Add this item
                 output += f"{prefix}• {name}"
                 if path:
                     output += f" (path: {path})"
                 if has_more:
                     output += " [...]"
                 output += "\n"
-                
-                # Add children
                 for child in item.get("children", []):
                     output += format_tree(child, indent + 1)
             return output
-        
-        # Format each category
+
         for category in result.get("categories", []):
             formatted_output += format_tree(category)
             formatted_output += "\n"
-        
+
         return formatted_output
     except Exception as e:
         error_msg = str(e)
         if "Browser is not available" in error_msg:
-            logger.error(f"Browser is not available in Ableton: {error_msg}")
-            return f"Error: The Ableton browser is not available. Make sure Ableton Live is fully loaded and try again."
+            return "Error: The Ableton browser is not available. Make sure Ableton Live is fully loaded and try again."
         elif "Could not access Live application" in error_msg:
-            logger.error(f"Could not access Live application: {error_msg}")
-            return f"Error: Could not access the Ableton Live application. Make sure Ableton Live is running and the Remote Script is loaded."
+            return "Error: Could not access the Ableton Live application. Make sure Ableton Live is running and the Remote Script is loaded."
         else:
             logger.error(f"Error getting browser tree: {error_msg}")
             return "Error getting browser tree. Please check the server logs for details."
@@ -2813,25 +2972,55 @@ def search_browser(ctx: Context, query: str, category: str = "all") -> str:
     """
     Search the Ableton browser for items matching a query.
 
+    Uses a cached browser index for instant results. The cache is built
+    automatically on first use and refreshed every 5 minutes.
+
     Parameters:
     - query: Search string to find items (searches by name)
     - category: Limit search to category ('all', 'instruments', 'sounds', 'drums', 'audio_effects', 'midi_effects')
     """
     try:
-        ableton = get_ableton_connection()
-        result = ableton.send_command("search_browser", {
-            "query": query,
-            "category": category
-        })
+        cache = _get_browser_cache()
+        if not cache:
+            return "Browser cache is empty. Make sure Ableton is running and try again."
 
-        results = result.get("results", [])
+        query_lower = query.lower()
+
+        # Map category filter keys to display names used in cache entries
+        category_display = {
+            "instruments": "Instruments",
+            "sounds": "Sounds",
+            "drums": "Drums",
+            "audio_effects": "Audio Effects",
+            "midi_effects": "MIDI Effects",
+        }
+        filter_display = category_display.get(category) if category != "all" else None
+
+        results = []
+        for item in cache:
+            # Filter by category if specified
+            if filter_display and item.get("category") != filter_display:
+                continue
+
+            # Substring match using pre-lowercased search_name
+            if query_lower in item.get("search_name", item.get("name", "").lower()):
+                results.append(item)
+
         if not results:
             return f"No results found for '{query}' in category '{category}'"
+
+        # Sort: loadable items first, then by name
+        results.sort(key=lambda x: (not x.get("is_loadable", False), x.get("name", "").lower()))
+
+        # Limit to 50 results
+        results = results[:50]
 
         formatted_output = f"Found {len(results)} results for '{query}':\n\n"
         for item in results:
             loadable = " [loadable]" if item.get("is_loadable", False) else ""
-            formatted_output += f"• {item.get('name', 'Unknown')}{loadable}\n"
+            folder = " [folder]" if item.get("is_folder", False) else ""
+            formatted_output += f"• {item.get('name', 'Unknown')}{loadable}{folder}\n"
+            formatted_output += f"  Category: {item.get('category', '?')} | Path: {item.get('path', '?')}\n"
             if item.get("uri"):
                 formatted_output += f"  URI: {item.get('uri')}\n"
 
@@ -2841,10 +3030,32 @@ def search_browser(ctx: Context, query: str, category: str = "all") -> str:
         return "Error searching browser. Please check the server logs for details."
 
 @mcp.tool()
+def refresh_browser_cache(ctx: Context) -> str:
+    """
+    Force a refresh of the browser cache.
+
+    Use this after installing new packs, instruments, or effects so that
+    search_browser can find them. The cache is also auto-refreshed every
+    5 minutes.
+    """
+    try:
+        success = _populate_browser_cache(force=True)
+        if success:
+            with _browser_cache_lock:
+                count = len(_browser_cache_flat)
+                cats = len(_browser_cache)
+            return f"Browser cache refreshed: {count} items across {cats} categories"
+        return "Failed to refresh browser cache. Make sure Ableton is running."
+    except Exception as e:
+        logger.error(f"Error refreshing browser cache: {str(e)}")
+        return "Error refreshing browser cache. Please check the server logs for details."
+
+
+@mcp.tool()
 def load_drum_kit(ctx: Context, track_index: int, rack_uri: str, kit_path: str) -> str:
     """
     Load a drum rack and then load a specific drum kit into it.
-    
+
     Parameters:
     - track_index: The index of the track to load on
     - rack_uri: The URI of the drum rack to load (e.g., 'Drums/Drum Rack')

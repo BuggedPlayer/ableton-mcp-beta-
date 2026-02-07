@@ -182,6 +182,12 @@ STEP 7: VERIFY THE CONNECTION
   4. Open the web dashboard at http://127.0.0.1:9880 to verify connection status.
   5. Test with a simple command like: "Get information about my Ableton session"
 
+  NOTE: On first launch, the server automatically populates a browser cache by
+  scanning Ableton's instrument/effect library (~10 seconds). After that,
+  "search_browser" returns instant results. The cache auto-refreshes every
+  5 minutes. You can force a re-scan with the "refresh_browser_cache" tool
+  after installing new packs or instruments.
+
 
 ================================================================================
 TROUBLESHOOTING

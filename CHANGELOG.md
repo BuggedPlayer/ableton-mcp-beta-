@@ -57,10 +57,18 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 - `apply_groove` — apply groove to a MIDI clip
 - `get_macro_values` — get current macro knob values for an Instrument Rack
 
+### New: Cached Browser Tree (1 tool)
+- `refresh_browser_cache` — force a full re-scan of Ableton's browser tree
+- `search_browser` now uses an in-memory cache instead of querying Ableton directly — **instant results, no more timeouts**
+- `get_browser_tree` returns cached data with URIs, so Claude can load instruments in fewer steps
+- **Background warmup**: on startup, the server scans all 5 browser categories (Instruments, Sounds, Drums, Audio Effects, MIDI Effects) using a BFS walker up to **depth 4** — finds instruments AND their individual presets (e.g. `sounds/Operator/Bass/FM Bass`)
+- Cache holds up to **5000 items**, auto-refreshes every **5 minutes**
+- Fixes: `search_browser` no longer times out; Claude gets correct URIs instead of guessing wrong ones
+
 ### Improvements
 - Package renamed to `ableton-mcp-stable` for stable release channel
 - Fixed server version detection (`importlib.metadata` now uses correct package name)
-- Total tools: 94 -> **128** (+34 new tools)
+- Total tools: 94 -> **131** (+37 new tools)
 
 ---
 
