@@ -124,7 +124,7 @@ function handlePing(args) {
     var requestId = (args.length > 0) ? args[0].toString() : "";
     var response = {
         status: "success",
-        result: { m4l_bridge: true, version: "1.1.0" },
+        result: { m4l_bridge: true, version: "2.0.0" },
         id: requestId
     };
     sendResponse(JSON.stringify(response));
@@ -349,7 +349,7 @@ function handleCheckDashboard(args) {
         status: "success",
         result: {
             dashboard_url: "http://127.0.0.1:9880",
-            bridge_version: "1.1.0",
+            bridge_version: "2.0.0",
             message: "Open the dashboard URL in your browser to view server status"
         },
         id: requestId
@@ -369,25 +369,39 @@ function handleCheckDashboard(args) {
 // ---------------------------------------------------------------------------
 
 function handleDiscoverChains(args) {
-    // args: [track_index (int), device_index (int), request_id (string)]
+    // args: [track_index (int), device_index (int), extra_path (string), request_id (string)]
+    // Backward-compatible: if only 3 args, extra_path is empty
     if (args.length < 3) {
         sendError("discover_chains requires track_index, device_index, request_id", "");
         return;
     }
     var trackIdx  = parseInt(args[0]);
     var deviceIdx = parseInt(args[1]);
-    var requestId = args[2].toString();
+    var extraPath = "";
+    var requestId;
 
-    var result = discoverChains(trackIdx, deviceIdx);
+    if (args.length >= 4) {
+        extraPath = args[2].toString();
+        requestId = args[3].toString();
+    } else {
+        requestId = args[2].toString();
+    }
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    if (extraPath && extraPath !== "") {
+        devicePath = devicePath + " " + extraPath;
+    }
+    post("discover_chains: path=" + devicePath + "\n");
+
+    var result = discoverChainsAtPath(devicePath);
     sendResult(result, requestId);
 }
 
-function discoverChains(trackIdx, deviceIdx) {
-    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+function discoverChainsAtPath(devicePath) {
     var deviceApi  = new LiveAPI(null, devicePath);
 
     if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
-        return { error: "No device found at track " + trackIdx + " device " + deviceIdx };
+        return { error: "No device found at path: " + devicePath };
     }
 
     var deviceName  = deviceApi.get("name").toString();
@@ -906,7 +920,7 @@ function handleGetWavetableInfo(args) {
         if (wt2) result.oscillator_2_wavetables = wt2.toString();
     } catch (e) {}
 
-    // Voice / unison
+    // Voice / unison properties — readable but NOT writable via M4L
     try { result.filter_routing     = parseInt(deviceApi.get("filter_routing")); } catch (e) {}
     try { result.mono_poly          = parseInt(deviceApi.get("mono_poly")); } catch (e) {}
     try { result.poly_voices        = parseInt(deviceApi.get("poly_voices")); } catch (e) {}
@@ -1027,35 +1041,61 @@ function handleSetWavetableProps(args) {
         return;
     }
 
-    var settable = [
-        "filter_routing", "mono_poly", "poly_voices",
+    // Tier 1: Oscillator properties — reliably settable via LiveAPI.set()
+    var tier1 = [
         "oscillator_1_effect_mode", "oscillator_2_effect_mode",
         "oscillator_1_wavetable_category", "oscillator_1_wavetable_index",
-        "oscillator_2_wavetable_category", "oscillator_2_wavetable_index",
+        "oscillator_2_wavetable_category", "oscillator_2_wavetable_index"
+    ];
+    // Tier 2: Voice/unison/filter properties — LOM-documented but set() is unreliable
+    // in Max [js] LiveAPI. Do NOT call get() after set() on these — crashes Ableton.
+    var tier2 = [
+        "filter_routing", "mono_poly", "poly_voices",
         "unison_mode", "unison_voice_count"
     ];
 
     var setCount = 0;
     var errors = [];
+    var details = [];
     for (var key in props) {
         if (!props.hasOwnProperty(key)) continue;
-        var found = false;
-        for (var s = 0; s < settable.length; s++) {
-            if (settable[s] === key) { found = true; break; }
+
+        // Check which tier
+        var isTier1 = false, isTier2 = false;
+        for (var s = 0; s < tier1.length; s++) {
+            if (tier1[s] === key) { isTier1 = true; break; }
         }
-        if (!found) {
+        if (!isTier1) {
+            for (var s2 = 0; s2 < tier2.length; s2++) {
+                if (tier2[s2] === key) { isTier2 = true; break; }
+            }
+        }
+        if (!isTier1 && !isTier2) {
             errors.push({ property: key, error: "not a settable property" });
             continue;
         }
+
+        var val = Number(props[key]);
+
+        // Fire-and-forget set() — NO get() calls to avoid Ableton crashes
         try {
-            deviceApi.set(key, props[key]);
-            setCount++;
+            deviceApi.set(key, val);
         } catch (e) {
             errors.push({ property: key, error: e.toString() });
+            continue;
+        }
+
+        if (isTier1) {
+            setCount++;
+            details.push({ property: key, value: val });
+        } else {
+            // Tier 2: set() was called but may not take effect
+            details.push({ property: key, value: val, note: "unverified — this property may not be writable via M4L" });
         }
     }
 
     var result = { properties_set: setCount };
+    if (details.length > 0) result.details = details;
     if (errors.length > 0) result.errors = errors;
     sendResult(result, requestId);
 }

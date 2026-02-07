@@ -1,6 +1,11 @@
-# AbletonMCP Max for Live Bridge
+# AbletonMCP Max for Live Bridge (v2.0.0)
 
-This Max for Live (M4L) device provides **optional** deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. When loaded, it enables access to hidden/non-automatable parameters on all Ableton devices (Operator, Wavetable, Simpler, Analog, Drift, etc.).
+This Max for Live (M4L) device provides **optional** deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. When loaded, it enables:
+
+- Access to hidden/non-automatable parameters on all Ableton devices
+- Device chain navigation inside Instrument Racks, Audio Effect Racks, and Drum Racks
+- Simpler/Sample deep access (markers, warp settings, slices)
+- Wavetable modulation matrix control
 
 ## What It Adds
 
@@ -8,6 +13,10 @@ This Max for Live (M4L) device provides **optional** deep Live Object Model (LOM
 |---|---|---|
 | Public device parameters | Yes (via Remote Script) | Yes |
 | Hidden/non-automatable parameters | No | **Yes** |
+| Rack chain navigation | No | **Yes** (nested device read/write) |
+| Simpler sample control | Basic (via Remote Script) | **Deep** (markers, slices, warp) |
+| Wavetable modulation matrix | No | **Yes** (mod sources → targets) |
+| Snapshots/Morph/Macros | Yes (via TCP since v2.0.0) | Yes |
 | All existing MCP tools | Yes | Yes (unchanged) |
 
 ## How It Works
@@ -20,7 +29,7 @@ MCP Server
   └── UDP :9878 / :9879 → M4L Bridge (this device, OSC protocol)
 ```
 
-The server sends OSC commands (e.g., `/ping`, `/discover_params`) with typed arguments (int, float, string). The M4L device's JavaScript processes them via the Live Object Model and returns base64-encoded JSON responses.
+The server sends OSC commands with typed arguments (int, float, string). The M4L device's JavaScript processes them via the Live Object Model and returns base64-encoded JSON responses.
 
 ## Setup Instructions
 
@@ -80,10 +89,12 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
 Use the `m4l_status` MCP tool to check if the bridge is connected:
 
 ```
-m4l_status()  →  "M4L bridge connected (v1.1.0)"
+m4l_status()  →  "M4L bridge connected (v2.0.0)"
 ```
 
 ## Available MCP Tools (When Bridge Is Loaded)
+
+### Hidden Parameter Access
 
 | Tool | Description |
 |---|---|
@@ -91,7 +102,32 @@ m4l_status()  →  "M4L bridge connected (v1.1.0)"
 | `discover_device_params(track, device)` | List ALL parameters (hidden + public) for any device |
 | `get_device_hidden_parameters(track, device)` | Get full parameter info including hidden ones |
 | `set_device_hidden_parameter(track, device, param_index, value)` | Set any parameter by LOM index |
+| `batch_set_hidden_parameters(track, device, params)` | Set multiple hidden params in one call |
 | `list_instrument_rack_presets()` | List saved Instrument Rack presets (VST/AU workaround) |
+
+### Device Chain Navigation (v2.0.0)
+
+| Tool | Description |
+|---|---|
+| `discover_rack_chains(track, device)` | Discover chains, nested devices, and drum pads in Racks |
+| `get_chain_device_parameters(track, device, chain, chain_device)` | Read all params of a nested device |
+| `set_chain_device_parameter(track, device, chain, chain_device, param, value)` | Set a param on a nested device |
+
+### Simpler / Sample Deep Access (v2.0.0)
+
+| Tool | Description |
+|---|---|
+| `get_simpler_info(track, device)` | Get Simpler state: playback mode, sample file, markers, warp, slices |
+| `set_simpler_sample_properties(track, device, ...)` | Set sample markers, warp mode, gain, etc. |
+| `simpler_manage_slices(track, device, action, ...)` | Insert, remove, clear, or reset slices |
+
+### Wavetable Modulation Matrix (v2.0.0)
+
+| Tool | Description |
+|---|---|
+| `get_wavetable_info(track, device)` | Get oscillator wavetables, mod matrix, unison, filter routing |
+| `set_wavetable_modulation(track, device, target, source, amount)` | Set modulation amount (Env2/Env3/LFO1/LFO2 → target) |
+| `set_wavetable_properties(track, device, ...)` | Set wavetable selection, unison, filter routing, voices |
 
 ## Troubleshooting
 
@@ -111,6 +147,26 @@ m4l_status()  →  "M4L bridge connected (v1.1.0)"
   - The Max patch objects (`udpreceive` and `udpsend`)
   - `server.py` (`M4LConnection` class: `send_port` and `recv_port`)
 
+## OSC Commands Reference (v2.0.0)
+
+| Address | Arguments | Description |
+|---|---|---|
+| `/ping` | `request_id` | Health check — returns bridge version |
+| `/discover_params` | `track_idx, device_idx, request_id` | Enumerate all LOM parameters |
+| `/get_hidden_params` | `track_idx, device_idx, request_id` | Get hidden parameter details |
+| `/set_hidden_param` | `track_idx, device_idx, param_idx, value, request_id` | Set a parameter by LOM index |
+| `/batch_set_hidden_params` | `track_idx, device_idx, params_b64, request_id` | Set multiple params (chunked, base64 JSON) |
+| `/check_dashboard` | `request_id` | Returns dashboard URL and bridge version |
+| `/discover_chains` | `track_idx, device_idx, request_id` | Discover rack chains and drum pads |
+| `/get_chain_device_params` | `track_idx, device_idx, chain_idx, chain_device_idx, request_id` | Get nested device params |
+| `/set_chain_device_param` | `track_idx, device_idx, chain_idx, chain_device_idx, param_idx, value, request_id` | Set nested device param |
+| `/get_simpler_info` | `track_idx, device_idx, request_id` | Get Simpler + sample info |
+| `/set_simpler_sample_props` | `track_idx, device_idx, props_b64, request_id` | Set sample properties (base64 JSON) |
+| `/simpler_slice` | `track_idx, device_idx, action, [slice_time], request_id` | Manage slices |
+| `/get_wavetable_info` | `track_idx, device_idx, request_id` | Get Wavetable state + mod matrix |
+| `/set_wavetable_modulation` | `track_idx, device_idx, target_idx, source_idx, amount, request_id` | Set mod matrix amount |
+| `/set_wavetable_props` | `track_idx, device_idx, props_b64, request_id` | Set Wavetable properties (base64 JSON) |
+
 ## Technical Notes
 
 - Communication uses **native OSC messages** over UDP — the MCP server builds OSC packets with typed arguments (int, float, string) and the M4L device parses them via Max's built-in OSC support
@@ -118,3 +174,6 @@ m4l_status()  →  "M4L bridge connected (v1.1.0)"
 - The bridge is **device-agnostic** — it works with any Ableton instrument or effect, not just specific ones
 - Parameter indices from the LOM may differ between Ableton Live versions — always use `discover_device_params` first
 - The bridge does not interfere with the Remote Script — both run simultaneously on separate ports
+- **v2.0.0**: Chain navigation uses `LiveAPI` with paths like `live_set tracks T devices D chains C devices CD` for nested access
+- **v2.0.0**: Simpler sample access uses path `live_set tracks T devices D sample` for LOM Sample object
+- **v2.0.0**: Wavetable modulation uses `deviceApi.call("get_modulation_value", target, source)` and `set_modulation_value`

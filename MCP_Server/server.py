@@ -304,9 +304,11 @@ class M4LConnection:
             ])
         # --- Phase 2: Chain navigation ---
         elif command_type == "discover_chains":
+            extra_path = params.get("chain_path", "") or ""
             return self._build_osc_message("/discover_chains", [
                 ("i", params["track_index"]),
                 ("i", params["device_index"]),
+                ("s", extra_path),
                 ("s", request_id),
             ])
         elif command_type == "get_chain_device_params":
@@ -4812,7 +4814,8 @@ def delete_macro(ctx: Context, macro_id: str) -> str:
 def discover_rack_chains(
     ctx: Context,
     track_index: int,
-    device_index: int
+    device_index: int,
+    chain_path: str = None
 ) -> str:
     """Discover chains and nested devices inside a Rack or Drum Rack.
 
@@ -4825,6 +4828,10 @@ def discover_rack_chains(
     Parameters:
     - track_index: The track containing the rack device
     - device_index: The index of the rack device on the track
+    - chain_path: Optional LOM sub-path to target a nested rack device.
+      Examples: "chains 0 devices 0" to target the first device in chain 0,
+      "drum_pads 0 chains 0 devices 0" to target a device inside a drum pad.
+      The path is appended to "live_set tracks T devices D".
 
     Requires the AbletonMCP M4L bridge device.
     """
@@ -4836,6 +4843,7 @@ def discover_rack_chains(
         result = m4l.send_command("discover_chains", {
             "track_index": track_index,
             "device_index": device_index,
+            "chain_path": chain_path or "",
         })
 
         data = result.get("result", result)
@@ -5399,20 +5407,24 @@ def set_wavetable_properties(
 
     Use get_wavetable_info() to see available wavetable categories and current values.
 
-    Parameters:
-    - track_index: Track containing the Wavetable
-    - device_index: Index of the Wavetable device
+    RELIABLE properties (oscillator settings):
     - oscillator_1_wavetable_category: Category index for Osc 1
     - oscillator_1_wavetable_index: Wavetable index within category for Osc 1
     - oscillator_2_wavetable_category: Category index for Osc 2
     - oscillator_2_wavetable_index: Wavetable index within category for Osc 2
     - oscillator_1_effect_mode: Effect mode for Osc 1
     - oscillator_2_effect_mode: Effect mode for Osc 2
+
+    LIMITED properties (may not take effect via M4L — use get_wavetable_info to read them):
     - filter_routing: 0=Serial, 1=Parallel, 2=Split
     - mono_poly: 0=Mono, 1=Poly
     - poly_voices: Number of polyphony voices
     - unison_mode: 0=None, 1=Classic, 2=Shimmer, 3=Noise, 4=Phase Sync, 5=Position Spread
     - unison_voice_count: Number of unison voices
+
+    Parameters:
+    - track_index: Track containing the Wavetable
+    - device_index: Index of the Wavetable device
 
     Requires the AbletonMCP M4L bridge device.
     """
@@ -5453,10 +5465,22 @@ def set_wavetable_properties(
         if data.get("error"):
             return f"Error: {data['error']}"
 
-        output = f"Set {data.get('properties_set', 0)} Wavetable properties."
-        if data.get("errors"):
+        set_count = data.get('properties_set', 0)
+        details = data.get('details', [])
+        errors = data.get('errors', [])
+
+        output = f"Set {set_count} Wavetable properties."
+        if details:
+            output += "\nDetails:\n"
+            for d in details:
+                note = d.get('note', '')
+                if note:
+                    output += f"  {d['property']} = {d.get('value', '?')} ({note})\n"
+                else:
+                    output += f"  {d['property']} = {d.get('value', '?')}\n"
+        if errors:
             output += "\nErrors:\n"
-            for err in data["errors"]:
+            for err in errors:
                 output += f"  {err['property']}: {err['error']}\n"
 
         return output

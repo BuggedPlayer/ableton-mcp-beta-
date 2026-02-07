@@ -277,7 +277,7 @@ A JavaScript file (v2.0.0) running inside a Max for Live `[js]` object. It provi
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `discover_rack_chains` | `track_index: int, device_index: int` | Discover chains, nested devices, and drum pads inside Instrument/Audio Effect/Drum Racks |
+| `discover_rack_chains` | `track_index: int, device_index: int, chain_path?: str` | Discover chains, nested devices, and drum pads inside Instrument/Audio Effect/Drum Racks. Use `chain_path` (e.g. `"chains 0 devices 0"`) to target nested racks |
 | `get_chain_device_parameters` | `track_index: int, device_index: int, chain_index: int, chain_device_index: int` | Get all parameters of a device nested inside a rack chain |
 | `set_chain_device_parameter` | `track_index: int, device_index: int, chain_index: int, chain_device_index: int, parameter_index: int, value: float` | Set a parameter on a device nested inside a rack chain |
 
@@ -295,7 +295,7 @@ A JavaScript file (v2.0.0) running inside a Max for Live `[js]` object. It provi
 |---|---|---|
 | `get_wavetable_info` | `track_index: int, device_index: int` | Get Wavetable device state: oscillator wavetables, modulation matrix, unison, filter routing |
 | `set_wavetable_modulation` | `track_index: int, device_index: int, target_index: int, source_index: int, amount: float` | Set modulation amount in Wavetable's mod matrix. Sources: 0=Env2, 1=Env3, 2=LFO1, 3=LFO2 |
-| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable properties: oscillator wavetable category/index, filter routing, unison, voices |
+| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable properties: oscillator wavetable category/index, effect modes (reliable). Filter routing, unison, voices are attempted but may not take effect via M4L |
 
 ### Snapshot & Versioning (v1.6.0)
 
