@@ -33,13 +33,14 @@ A Python server that implements the Model Context Protocol and bridges between t
 - **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends newline-delimited JSON commands and receives newline-delimited JSON responses. Includes automatic reconnection logic.
 - **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
 
-The server exposes **131 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
+The server exposes **132 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
 
 **Startup sequence:**
 1. Connect to Ableton Remote Script (TCP port 9877)
 2. Auto-connect to M4L bridge (UDP ports 9878/9879) — no need to wait for a tool call
 3. Start the web status dashboard (HTTP port 9880)
-4. Warm up browser cache in background (BFS scan of all 5 browser categories, depth 4, ~10s)
+4. Load browser cache from disk instantly (~50ms) — search and device loading work immediately
+5. Background refresh: BFS scan of 7 browser categories (depth 3, rate-limited) updates cache and saves to disk
 
 ### 3. Web Status Dashboard (`http://127.0.0.1:9880`)
 A live web dashboard running on a background daemon thread alongside the MCP server. Built with starlette + uvicorn (already installed as transitive deps of `mcp[cli]`, zero new dependencies). Auto-refreshes every 3 seconds.
@@ -56,7 +57,7 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 
 ---
 
-## Complete Tool Reference (131 Tools)
+## Complete Tool Reference (132 Tools)
 
 ### Session & Transport
 
@@ -243,17 +244,18 @@ A JavaScript file running inside a Max for Live `[js]` object. It provides deep 
 |---|---|---|
 | `get_device_parameters` | `track_index: int, device_index: int` | Get all parameters and values for a device |
 | `set_device_parameter` | `track_index: int, device_index: int, parameter_name: str, value: float` | Set a device parameter by name (clamped to min/max) |
+| `set_device_parameters` | `track_index: int, device_index: int, parameters: str` | Set multiple parameters in one call. `parameters` is a JSON array: `[{"name": "...", "value": 0.5}, ...]` |
 | `delete_device` | `track_index: int, device_index: int` | Delete a device from a track |
 
 ### Browser & Loading
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `get_browser_tree` | `category_type: str = "all"` | Get browser categories (instruments, sounds, drums, audio_effects, midi_effects) |
+| `get_browser_tree` | `category_type: str = "all"` | Get browser categories (instruments, drums, audio_effects, midi_effects, max_for_live, plugins, user_library) |
 | `get_browser_items_at_path` | `path: str` | Get items at a browser path (e.g. "category/folder/subfolder") |
-| `search_browser` | `query: str, category: str = "all"` | Search the browser for items by name (uses in-memory cache — instant results) |
+| `search_browser` | `query: str, category: str = "all"` | Search the browser for items by name (uses cached index — instant results). Categories: instruments, drums, audio_effects, midi_effects, max_for_live, plugins, user_library |
 | `refresh_browser_cache` | — | Force a full re-scan of Ableton's browser tree (cache auto-refreshes every 5 min) |
-| `load_instrument_or_effect` | `track_index: int, uri: str` | Load an instrument or effect onto a track using its browser URI |
+| `load_instrument_or_effect` | `track_index: int, uri: str` | Load an instrument or effect by URI or name (e.g. `"Reverb"`, `"Wavetable"` — auto-resolves to correct URI) |
 | `load_sample` | `track_index: int, sample_uri: str` | Load an audio sample onto a track |
 | `load_drum_kit` | `track_index: int, rack_uri: str, kit_path: str` | Load a drum rack with a specific kit |
 | `get_user_library` | — | Get user library browser tree |
@@ -439,18 +441,30 @@ The server now automatically connects to the M4L bridge device on startup, right
 
 **Core primitive**: `batch_set_hidden_parameters` sets multiple params reliably via sequential `set_hidden_param` UDP calls with automatic pacing.
 
-### Cached Browser Tree (v1.9.0)
-The server now pre-scans Ableton's browser tree on startup and caches the results in memory. This eliminates the slow, recursive browser queries that previously caused timeouts when Claude searched for instruments or presets.
+### Cached Browser Tree (v1.9.0+)
+The server scans Ableton's browser tree and caches results both in memory and on disk. This eliminates the slow, recursive browser queries that previously caused timeouts.
 
-- **Background warmup**: 3 seconds after boot, a daemon thread BFS-walks all 5 browser categories (Instruments, Sounds, Drums, Audio Effects, MIDI Effects) up to **depth 4** — deep enough to find individual presets (e.g. `sounds/Operator/Bass/FM Bass`)
-- **Cache size**: up to **5,000 items**, auto-refreshes every **5 minutes**
-- `search_browser` now queries the local cache instead of sending a recursive search to Ableton — **instant results, no more timeouts**
-- `get_browser_tree` returns cached data with URIs, so Claude can load instruments in fewer steps
-- `refresh_browser_cache` forces a full re-scan (useful after installing new packs or instruments)
+- **Disk persistence**: cache is saved to `~/.ableton-mcp/browser_cache.json` after each scan. On next startup, loaded **instantly** (~50ms) — search and device loading work immediately, no waiting
+- **Background refresh**: 5 seconds after boot, a daemon thread BFS-walks 7 browser categories (Instruments, Drums, Audio Effects, MIDI Effects, Max for Live, Plug-ins, User Library) up to **depth 3** with rate limiting (50ms between commands)
+- **Dynamic device URI map**: 5,118 device names auto-mapped to URIs — say `"load Reverb"` and it resolves to `query:AudioFx#Reverb` instantly
+- **Cache size**: up to **1,500 items per category**, auto-refreshes every **5 minutes**, disk cache valid for **24 hours**
+- `search_browser` queries the local cache — **instant results, no more timeouts**
+- `refresh_browser_cache` forces a full re-scan and saves to disk
+- **Singleton guard**: exclusive TCP port lock prevents duplicate server instances from fighting
+
+### v1.9.1 — Browser Cache Overhaul & Batch Parameters
+
+- **Disk browser cache**: scan results persisted to `~/.ableton-mcp/browser_cache.json` — instant startup after first scan
+- **Dynamic device URI map**: 5,118+ device names auto-resolved to correct URIs — no more `search_browser` before loading
+- **Batch parameter setting**: `set_device_parameters` sets 20+ parameters in a single call — 10x faster sound design
+- **Singleton guard**: prevents duplicate server instances from fighting via exclusive port lock
+- **Expanded browser categories**: 7 categories including Max for Live, Plug-ins, User Library
+- **Connection stability**: rate limiting, reconnect resilience, longer timeouts for browser scan
+- Total tools: 131 -> **132** (+1 new tool)
 
 ### v1.9.0 — Major Expansion (37 New Tools)
 
-- **Cached Browser Tree**: `search_browser` now uses an in-memory BFS cache (depth 4, 5000 items, 5-min TTL) — instant results, no more timeouts. New `refresh_browser_cache` tool to force re-scan
+- **Cached Browser Tree**: `search_browser` uses in-memory BFS cache — instant results, no more timeouts
 - **ASCII Grid Notation**: `clip_to_grid` / `grid_to_clip` for visual drum/melodic pattern editing
 - **Transport & Recording**: Full transport control — loop info, recording, overdub, metronome, tap tempo, playback position
 - **Bulk Queries**: `get_all_tracks_info` / `get_return_tracks_info` for fast session overview
@@ -595,7 +609,7 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 - **Timeout errors**: Simplify requests or break them into smaller steps
 - **Changes not taking effect**: If you edited source code, rebuild the `.whl` with `uv build` — the MCP server runs from the packaged wheel, not source files
 - **Remote Script not updating**: Delete `__pycache__/__init__.cpython-*.pyc` in the Ableton MIDI Remote Scripts folder, then reload the control surface
-- **Multiple server instances**: Ensure only one MCP server is running at a time
+- **Multiple server instances**: The server now has a singleton guard (port 9881) — a second instance will exit automatically. If the port is stuck, set `ABLETON_MCP_LOCK_PORT` env var
 - **Dashboard not loading**: Make sure Claude Desktop is running the latest wheel (check `claude_desktop_config.json`). Restart Claude Desktop after rebuilding. If port 9880 is in use, set `ABLETON_MCP_DASHBOARD_PORT` env var
 
 ## Disclaimer

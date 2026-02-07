@@ -2799,6 +2799,56 @@ def set_device_parameter(ctx: Context, track_index: int, device_index: int,
         return "Error setting device parameter. Please check the server logs for details."
 
 @mcp.tool()
+def set_device_parameters(ctx: Context, track_index: int, device_index: int,
+                           parameters: str, track_type: str = "track") -> str:
+    """
+    Set multiple device parameters in a single call (much faster than setting one at a time).
+
+    ALWAYS prefer this over calling set_device_parameter multiple times.
+
+    Parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device on the track
+    - parameters: JSON string of parameter list, e.g. '[{"name": "Filter Freq", "value": 0.5}, {"name": "Resonance", "value": 0.3}]'
+    - track_type: Type of track: "track" (default), "return", or "master"
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        if track_type not in ("track", "return", "master"):
+            return "Error: track_type must be 'track', 'return', or 'master'"
+
+        params_list = json.loads(parameters) if isinstance(parameters, str) else parameters
+        if not isinstance(params_list, list) or not params_list:
+            return "Error: parameters must be a non-empty JSON array of {name, value} objects"
+
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_device_parameters_batch", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameters": params_list,
+            "track_type": track_type,
+        })
+
+        device_name = result.get("device_name", "?")
+        results = result.get("results", [])
+        ok = [r for r in results if "error" not in r]
+        errs = [r for r in results if "error" in r]
+
+        summary = f"Set {len(ok)} parameters on '{device_name}'"
+        if errs:
+            summary += f" ({len(errs)} not found: {', '.join(r['name'] for r in errs)})"
+        return summary
+    except json.JSONDecodeError:
+        return "Error: parameters must be a valid JSON array"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        logger.error(f"Error in batch set parameters: {str(e)}")
+        return "Error setting device parameters. Please check the server logs for details."
+
+
+@mcp.tool()
 def get_user_library(ctx: Context) -> str:
     """
     Get the user library browser tree, including user folders and samples.

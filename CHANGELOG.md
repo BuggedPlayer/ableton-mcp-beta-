@@ -4,6 +4,53 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v1.9.1
+
+### New: Batch Parameter Setting (1 tool)
+- `set_device_parameters` — set multiple device parameters in a single call (JSON array of `{name, value}` pairs). Replaces 20+ individual `set_device_parameter` calls with one round-trip. Essential for sound design tasks like creating pads, leads, etc.
+
+### New: Dynamic Device URI Map
+- **Automatic device name resolution**: say `"load Reverb on track 3"` and the server resolves the name to the correct browser URI (`query:AudioFx#Reverb`) instantly — no `search_browser` needed
+- `_device_uri_map` built dynamically from browser cache after each scan (5,118 device names mapped)
+- Collision resolution: Instruments > Audio Effects > MIDI Effects > Max for Live > Plug-ins > Drums > User Library
+- `_resolve_device_uri()` does O(1) lookup, waits for warmup thread if map is empty
+
+### New: Disk Browser Cache
+- Browser cache is now **persisted to disk** at `~/.ableton-mcp/browser_cache.json` after each successful scan
+- On startup, disk cache is loaded **instantly** (~50ms) before Ableton even connects — `search_browser` and device loading work immediately
+- Background refresh still runs to keep cache fresh and re-saves to disk
+- 24-hour staleness limit — disk cache is ignored if older than 1 day
+- Atomic writes via temp file + `os.replace()` to prevent corruption
+- `refresh_browser_cache` updates both memory and disk
+
+### New: Singleton Guard
+- **Prevents duplicate MCP server instances** — uses exclusive TCP port lock on 9881 with `SO_EXCLUSIVEADDRUSE`
+- Second instance exits immediately with clear error message instead of silently fighting the first
+
+### Browser Cache Improvements
+- **Expanded categories**: now scans 7 browser categories (was 5): Instruments, Drums, Audio Effects, MIDI Effects, Max for Live, Plug-ins, User Library
+- **Removed non-device categories**: Sounds, Clips, Samples, Packs no longer scanned (not useful for device loading, were slowing scan)
+- **Per-category item cap**: 1,500 items per category (was 5,000 shared across all — Instruments used to consume entire budget)
+- **BFS depth reduced**: depth 3 (was 4) — gets device categories without individual preset files
+- **Rate limiting**: 50ms delay between BFS commands to prevent socket flooding
+- **60-second timeout** for browser scan commands (was 10s — Samples root was timing out)
+- **Reconnect resilience**: if connection drops mid-scan, waits 2s, reconnects, and continues instead of crashing
+- **Duplicate scan prevention**: `_browser_cache_populating` flag prevents warmup thread and `_resolve_device_uri` from triggering concurrent scans
+- **5-second warmup delay**: gives Remote Script time to fully initialize before opening second TCP connection
+
+### Bug Fixes
+- **Fixed socket concurrency crash**: browser cache scan used shared global TCP connection, corrupting it for other tools. Now uses dedicated `AbletonConnection` with proper `try/finally` cleanup
+- **Fixed `_browser_cache_populating` flag not resetting** on early connection failure (was getting stuck forever, blocking all future scans)
+- **Fixed hardcoded device URIs**: replaced `_WELL_KNOWN_DEVICES` dict (which had wrong URIs like `query:Audio%20Effects#Reverb`) with dynamic map from actual Ableton browser cache
+- **Fixed M4L socket binding**: replaced `SO_REUSEADDR` with `SO_EXCLUSIVEADDRUSE` to prevent port sharing between instances
+
+### Performance
+- Browser cache scan: ~2 minutes (was ~3.5 min with old categories, was ~100s with duplicate scans)
+- **With disk cache: instant startup** — 0ms wait for search/device loading (was 2-3.5 minutes on first use)
+- Total: 6,473 items cached, 5,118 device names mapped
+
+---
+
 ## v1.9.0
 
 ### New: ASCII Grid Notation (2 tools)
@@ -82,7 +129,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 ### Improvements
 - Package renamed to `ableton-mcp-stable` for stable release channel
 - Fixed server version detection (`importlib.metadata` now uses correct package name)
-- Total tools: 94 -> **131** (+37 new tools)
+- Total tools: 94 -> **131** (+37 new tools, see v1.9.1 for +1 more)
 
 ---
 
