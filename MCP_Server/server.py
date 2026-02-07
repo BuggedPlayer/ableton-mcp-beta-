@@ -130,7 +130,7 @@ class AbletonConnection:
         "duplicate_clip_loop", "set_song_loop", "set_song_time",
     ])
 
-    def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    def send_command(self, command_type: str, params: Dict[str, Any] = None, timeout: float = None) -> Dict[str, Any]:
         """Send a command to Ableton and return the response.
 
         Includes automatic retry: if the first attempt fails due to a
@@ -160,8 +160,9 @@ class AbletonConnection:
                 if is_modifying:
                     time.sleep(0.1)
 
-                # Set timeout based on command type
-                timeout = 15.0 if is_modifying else 10.0
+                # Set timeout based on command type (caller override takes priority)
+                if timeout is None:
+                    timeout = 15.0 if is_modifying else 10.0
                 # Receive the response (already parsed by receive_full_response)
                 response = self.receive_full_response(self.sock, timeout=timeout)
                 logger.debug("Response status: %s", response.get('status', 'unknown'))
@@ -498,8 +499,15 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 
         # Pre-populate browser cache in background (so search_browser is instant)
         def _browser_cache_warmup():
-            """Background thread: wait for Ableton connection, then scan browser."""
-            for _ in range(30):  # poll up to 15s for Ableton connection
+            """Background thread: load disk cache instantly, then refresh from Ableton."""
+            # Step 1: Load from disk (instant, works even before Ableton connects)
+            disk_loaded = _load_browser_cache_from_disk()
+            if disk_loaded:
+                logger.info("Browser cache ready from disk (background refresh will follow)")
+
+            # Step 2: Wait for Ableton, then do a live scan to refresh
+            time.sleep(5)  # let Ableton & Remote Script fully settle
+            for _ in range(20):  # poll up to 10s more for Ableton connection
                 if _ableton_connection and _ableton_connection.sock:
                     break
                 time.sleep(0.5)
@@ -662,6 +670,9 @@ _browser_cache_timestamp: float = 0.0
 _BROWSER_CACHE_TTL = 300.0  # 5 minutes
 _browser_cache_lock = threading.Lock()
 _browser_cache_populating = False  # prevents duplicate scans
+_BROWSER_DISK_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".ableton-mcp")
+_BROWSER_DISK_CACHE_PATH = os.path.join(_BROWSER_DISK_CACHE_DIR, "browser_cache.json")
+_BROWSER_DISK_CACHE_MAX_AGE = 86400.0  # 24 hours — disk cache ignored if older
 
 # Dynamic device URI map — built from browser cache after each scan.
 # Maps lowercase device name -> correct URI from Ableton's LOM.
@@ -688,15 +699,11 @@ _CATEGORY_PRIORITY: Dict[str, int] = {
 # get_browser_items_at_path (which lowercases the first component).
 _BROWSER_CATEGORIES = [
     ("instruments", "Instruments"),
-    ("sounds", "Sounds"),
     ("drums", "Drums"),
     ("audio_effects", "Audio Effects"),
     ("midi_effects", "MIDI Effects"),
     ("max_for_live", "Max for Live"),
     ("plugins", "Plug-ins"),
-    ("clips", "Clips"),
-    ("samples", "Samples"),
-    ("packs", "Packs"),
     ("user_library", "User Library"),
 ]
 
@@ -748,13 +755,87 @@ def _build_device_uri_map(flat_items: List[Dict[str, Any]]) -> Dict[str, str]:
     return uri_map
 
 
+def _save_browser_cache_to_disk() -> bool:
+    """Persist the in-memory browser cache to a JSON file on disk."""
+    try:
+        with _browser_cache_lock:
+            if not _browser_cache_flat:
+                return False
+            data = {
+                "version": 1,
+                "timestamp": _browser_cache_timestamp,
+                "flat": _browser_cache_flat,
+                "by_category": _browser_cache_by_category,
+                "device_uri_map": _device_uri_map,
+            }
+
+        os.makedirs(_BROWSER_DISK_CACHE_DIR, exist_ok=True)
+        tmp_path = _BROWSER_DISK_CACHE_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, separators=(",", ":"))
+        os.replace(tmp_path, _BROWSER_DISK_CACHE_PATH)
+        logger.info("Browser cache saved to disk (%d items)", len(data["flat"]))
+        return True
+    except Exception as e:
+        logger.warning("Failed to save browser cache to disk: %s", e)
+        return False
+
+
+def _load_browser_cache_from_disk() -> bool:
+    """Load browser cache from disk into the in-memory globals.
+
+    Returns True if a valid, non-stale disk cache was loaded.
+    """
+    global _browser_cache_flat, _browser_cache_by_category, _browser_cache_timestamp, _device_uri_map
+
+    try:
+        if not os.path.exists(_BROWSER_DISK_CACHE_PATH):
+            logger.info("No disk cache found")
+            return False
+
+        with open(_BROWSER_DISK_CACHE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict) or data.get("version") != 1:
+            logger.warning("Disk cache has unknown format, ignoring")
+            return False
+
+        flat = data.get("flat", [])
+        by_cat = data.get("by_category", {})
+        uri_map = data.get("device_uri_map", {})
+        disk_timestamp = data.get("timestamp", 0.0)
+
+        if not flat:
+            logger.info("Disk cache is empty, ignoring")
+            return False
+
+        age = time.time() - disk_timestamp
+        if age > _BROWSER_DISK_CACHE_MAX_AGE:
+            logger.info("Disk cache is %.1f hours old (max %.1f), ignoring",
+                        age / 3600, _BROWSER_DISK_CACHE_MAX_AGE / 3600)
+            return False
+
+        with _browser_cache_lock:
+            _browser_cache_flat = flat
+            _browser_cache_by_category = by_cat
+            _device_uri_map = uri_map
+            _browser_cache_timestamp = disk_timestamp
+
+        logger.info("Loaded browser cache from disk: %d items, %d categories, %d device URIs (%.1f min old)",
+                    len(flat), len(by_cat), len(uri_map), age / 60)
+        return True
+
+    except Exception as e:
+        logger.warning("Failed to load browser cache from disk: %s", e)
+        return False
+
+
 def _populate_browser_cache(force: bool = False) -> bool:
     """Scan Ableton's browser tree and cache all items for instant search.
 
-    Uses a breadth-first walk up to depth 4 so that instrument presets
-    (e.g. sounds/Operator/Bass/FM Bass) are included.  Each level is a
-    single get_browser_items_at_path call which completes well within the
-    socket timeout.  Total items are capped at 5000 to prevent runaway scans.
+    Uses a breadth-first walk up to depth 3 across 11 browser categories.
+    Each command is rate-limited (50ms gap) to avoid overwhelming Ableton's
+    socket handler.  Items are capped at 1500 per category.
 
     Uses a **dedicated TCP connection** to avoid corrupting the shared global
     connection when the BFS scan sends many rapid commands.
@@ -772,20 +853,21 @@ def _populate_browser_cache(force: bool = False) -> bool:
     # Use a dedicated connection so rapid BFS commands don't corrupt the
     # shared global socket (which other tools need concurrently).
     ableton = AbletonConnection(host="localhost", port=9877)
+
     try:
-        if not ableton.connect():
-            logger.warning("Browser cache: cannot connect to Ableton")
+        try:
+            if not ableton.connect():
+                logger.warning("Browser cache: cannot connect to Ableton")
+                return False
+        except Exception as e:
+            logger.warning("Browser cache: cannot connect to Ableton: %s", e)
             return False
-    except Exception as e:
-        logger.warning("Browser cache: cannot connect to Ableton: %s", e)
-        return False
 
-    logger.info("Browser cache: starting scan...")
-    flat_items: List[Dict[str, Any]] = []
-    by_display: Dict[str, List[Dict[str, Any]]] = {}
-    total = 0
+        logger.info("Browser cache: starting scan...")
+        flat_items: List[Dict[str, Any]] = []
+        by_display: Dict[str, List[Dict[str, Any]]] = {}
+        total = 0
 
-    try:
         for path_root, display_name in _BROWSER_CATEGORIES:
             category_items: List[Dict[str, Any]] = []
             cat_count = 0
@@ -797,9 +879,19 @@ def _populate_browser_cache(force: bool = False) -> bool:
                 current_path, depth = queue.popleft()
 
                 try:
-                    result = ableton.send_command("get_browser_items_at_path", {"path": current_path})
+                    result = ableton.send_command("get_browser_items_at_path", {"path": current_path}, timeout=60.0)
                 except Exception as e:
                     logger.warning("Browser cache: failed to read '%s': %s", current_path, e)
+                    # Try to re-establish connection before continuing
+                    time.sleep(2)
+                    try:
+                        ableton.disconnect()
+                        if not ableton.connect():
+                            logger.warning("Browser cache: lost connection, skipping '%s'", display_name)
+                            break
+                    except Exception:
+                        logger.warning("Browser cache: lost connection, skipping '%s'", display_name)
+                        break
                     continue
 
                 if "error" in result:
@@ -833,6 +925,9 @@ def _populate_browser_cache(force: bool = False) -> bool:
                     if item.get("is_folder", False) and depth < _BROWSER_CACHE_MAX_DEPTH:
                         queue.append((item_path, depth + 1))
 
+                # Rate-limit to avoid overwhelming Ableton's socket handler
+                time.sleep(0.05)
+
             by_display[display_name] = category_items
             logger.info("Browser cache: '%s' — %d items", display_name, len(category_items))
 
@@ -845,6 +940,7 @@ def _populate_browser_cache(force: bool = False) -> bool:
             _browser_cache_timestamp = time.time()
 
         logger.info("Browser cache: %d items, %d categories, %d device names mapped", total, len(by_display), len(device_map))
+        _save_browser_cache_to_disk()
         return True
 
     finally:
@@ -3239,7 +3335,7 @@ def refresh_browser_cache(ctx: Context) -> str:
                 count = len(_browser_cache_flat)
                 cats = len(_browser_cache_by_category)
                 devices = len(_device_uri_map)
-            return f"Browser cache refreshed: {count} items across {cats} categories, {devices} device names mapped"
+            return f"Browser cache refreshed: {count} items across {cats} categories, {devices} device names mapped (saved to disk)"
         return "Failed to refresh browser cache. Make sure Ableton is running."
     except Exception as e:
         logger.error("Error refreshing browser cache: %s", e)
