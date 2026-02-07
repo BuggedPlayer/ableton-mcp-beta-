@@ -214,7 +214,9 @@ class M4LConnection:
         try:
             self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Use exclusive binding — prevents a second instance from sharing this port
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                self.recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             self.recv_sock.bind(("127.0.0.1", self.recv_port))
             self.recv_sock.settimeout(5.0)
             self._connected = True
@@ -418,8 +420,17 @@ class M4LConnection:
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     """Manage server startup and shutdown lifecycle"""
-    global _server_start_time
+    global _server_start_time, _singleton_lock_sock
     try:
+        # Singleton guard — prevent duplicate server instances
+        try:
+            _singleton_lock_sock = _acquire_singleton_lock()
+        except RuntimeError as e:
+            logger.error(str(e))
+            logger.error("Exiting to avoid conflicts.")
+            import sys
+            sys.exit(1)
+
         logger.info("AbletonMCP Beta server starting up")
         _server_start_time = time.time()
 
@@ -511,6 +522,8 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             logger.info("Disconnecting M4L bridge on shutdown")
             _m4l_connection.disconnect()
             _m4l_connection = None
+        _release_singleton_lock(_singleton_lock_sock)
+        _singleton_lock_sock = None
         logger.info("AbletonMCP Beta server shut down")
 
 # Create the MCP server with lifespan support
@@ -535,8 +548,141 @@ _tool_call_counts: Dict[str, int] = {}
 _tool_call_lock = threading.Lock()
 _dashboard_server = None
 DASHBOARD_PORT = int(os.environ.get("ABLETON_MCP_DASHBOARD_PORT", "9880"))
+SINGLETON_LOCK_PORT = int(os.environ.get("ABLETON_MCP_LOCK_PORT", "9881"))
+_singleton_lock_sock: socket.socket = None
 _server_log_buffer: deque = deque(maxlen=200)
 _server_log_lock = threading.Lock()
+
+# Well-known Ableton devices — allows load_instrument_or_effect to accept
+# bare names (e.g. "Reverb") and auto-resolve to the correct URI.
+_WELL_KNOWN_DEVICES: Dict[str, str] = {
+    # --- Instruments ---
+    "analog": "query:Synths#Analog",
+    "collision": "query:Synths#Collision",
+    "drift": "query:Synths#Drift",
+    "electric": "query:Synths#Electric",
+    "external instrument": "query:Synths#External%20Instrument",
+    "instrument rack": "query:Synths#Instrument%20Rack",
+    "meld": "query:Synths#Meld",
+    "operator": "query:Synths#Operator",
+    "sampler": "query:Synths#Sampler",
+    "simpler": "query:Synths#Simpler",
+    "tension": "query:Synths#Tension",
+    "wavetable": "query:Synths#Wavetable",
+    # --- Audio Effects ---
+    "amp": "query:Audio%20Effects#Amp",
+    "audio effect rack": "query:Audio%20Effects#Audio%20Effect%20Rack",
+    "auto filter": "query:Audio%20Effects#Auto%20Filter",
+    "auto pan": "query:Audio%20Effects#Auto%20Pan",
+    "beat repeat": "query:Audio%20Effects#Beat%20Repeat",
+    "cabinet": "query:Audio%20Effects#Cabinet",
+    "channel eq": "query:Audio%20Effects#Channel%20EQ",
+    "chorus-ensemble": "query:Audio%20Effects#Chorus-Ensemble",
+    "compressor": "query:Audio%20Effects#Compressor",
+    "convolution reverb": "query:Audio%20Effects#Convolution%20Reverb",
+    "corpus": "query:Audio%20Effects#Corpus",
+    "delay": "query:Audio%20Effects#Delay",
+    "drum buss": "query:Audio%20Effects#Drum%20Buss",
+    "dynamic tube": "query:Audio%20Effects#Dynamic%20Tube",
+    "echo": "query:Audio%20Effects#Echo",
+    "eq eight": "query:Audio%20Effects#EQ%20Eight",
+    "eq three": "query:Audio%20Effects#EQ%20Three",
+    "erosion": "query:Audio%20Effects#Erosion",
+    "filter delay": "query:Audio%20Effects#Filter%20Delay",
+    "flanger": "query:Audio%20Effects#Flanger",
+    "frequency shifter": "query:Audio%20Effects#Frequency%20Shifter",
+    "gate": "query:Audio%20Effects#Gate",
+    "glue compressor": "query:Audio%20Effects#Glue%20Compressor",
+    "grain delay": "query:Audio%20Effects#Grain%20Delay",
+    "hybrid reverb": "query:Audio%20Effects#Hybrid%20Reverb",
+    "limiter": "query:Audio%20Effects#Limiter",
+    "looper": "query:Audio%20Effects#Looper",
+    "multiband dynamics": "query:Audio%20Effects#Multiband%20Dynamics",
+    "overdrive": "query:Audio%20Effects#Overdrive",
+    "pedal": "query:Audio%20Effects#Pedal",
+    "phaser-flanger": "query:Audio%20Effects#Phaser-Flanger",
+    "redux": "query:Audio%20Effects#Redux",
+    "resonators": "query:Audio%20Effects#Resonators",
+    "reverb": "query:Audio%20Effects#Reverb",
+    "saturator": "query:Audio%20Effects#Saturator",
+    "shifter": "query:Audio%20Effects#Shifter",
+    "spectral resonator": "query:Audio%20Effects#Spectral%20Resonator",
+    "spectral time": "query:Audio%20Effects#Spectral%20Time",
+    "spectrum": "query:Audio%20Effects#Spectrum",
+    "tuner": "query:Audio%20Effects#Tuner",
+    "utility": "query:Audio%20Effects#Utility",
+    "vinyl distortion": "query:Audio%20Effects#Vinyl%20Distortion",
+    "vocoder": "query:Audio%20Effects#Vocoder",
+    # --- MIDI Effects ---
+    "arpeggiator": "query:MIDI%20Effects#Arpeggiator",
+    "chord": "query:MIDI%20Effects#Chord",
+    "midi effect rack": "query:MIDI%20Effects#MIDI%20Effect%20Rack",
+    "note length": "query:MIDI%20Effects#Note%20Length",
+    "pitch": "query:MIDI%20Effects#Pitch",
+    "random": "query:MIDI%20Effects#Random",
+    "scale": "query:MIDI%20Effects#Scale",
+    "velocity": "query:MIDI%20Effects#Velocity",
+}
+
+
+def _resolve_device_uri(uri_or_name: str) -> str:
+    """Resolve a device name or URI to a loadable URI.
+
+    If the input already looks like a URI (contains ':' or '#'), return as-is.
+    Otherwise, look up the name (case-insensitive) in _WELL_KNOWN_DEVICES.
+    Falls back to browser cache, then passes through as-is.
+    """
+    if ":" in uri_or_name or "#" in uri_or_name:
+        return uri_or_name
+
+    resolved = _WELL_KNOWN_DEVICES.get(uri_or_name.lower())
+    if resolved:
+        logger.info("Resolved device name '%s' to URI '%s'", uri_or_name, resolved)
+        return resolved
+
+    # Fallback: search browser cache for exact name match
+    name_lower = uri_or_name.lower()
+    for item in _browser_cache_flat:
+        if item.get("search_name") == name_lower and item.get("is_loadable") and item.get("uri"):
+            resolved = item["uri"]
+            logger.info("Resolved device name '%s' via browser cache to URI '%s'", uri_or_name, resolved)
+            return resolved
+
+    logger.warning("Could not resolve '%s' to a known URI, passing through as-is", uri_or_name)
+    return uri_or_name
+
+
+def _acquire_singleton_lock() -> socket.socket:
+    """Acquire an exclusive TCP port lock to prevent duplicate server instances.
+
+    Returns the bound socket (caller must keep it alive for the server's lifetime).
+    Raises RuntimeError if another instance already holds the lock.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        sock.bind(("127.0.0.1", SINGLETON_LOCK_PORT))
+        sock.listen(1)
+        logger.info("Singleton lock acquired on port %d", SINGLETON_LOCK_PORT)
+        return sock
+    except OSError as e:
+        sock.close()
+        raise RuntimeError(
+            f"Another AbletonMCP server instance is already running "
+            f"(port {SINGLETON_LOCK_PORT} is in use). "
+            f"Stop the other instance first."
+        ) from e
+
+
+def _release_singleton_lock(sock: socket.socket):
+    """Release the singleton lock by closing the lock socket."""
+    if sock:
+        try:
+            sock.close()
+            logger.info("Singleton lock released")
+        except Exception:
+            pass
 
 
 class _DashboardLogHandler(logging.Handler):
@@ -632,11 +778,12 @@ def _populate_browser_cache(force: bool = False) -> bool:
     try:
         for path_root, display_name in _BROWSER_CATEGORIES:
             category_items: List[Dict[str, Any]] = []
+            cat_count = 0
 
             # BFS queue: (browser_path, depth)
             queue = deque([(path_root, 0)])
 
-            while queue and total < _BROWSER_CACHE_MAX_ITEMS:
+            while queue and cat_count < _BROWSER_CACHE_MAX_ITEMS:
                 current_path, depth = queue.popleft()
 
                 try:
@@ -649,7 +796,7 @@ def _populate_browser_cache(force: bool = False) -> bool:
                     continue
 
                 for item in result.get("items", []):
-                    if total >= _BROWSER_CACHE_MAX_ITEMS:
+                    if cat_count >= _BROWSER_CACHE_MAX_ITEMS:
                         break
 
                     name = item.get("name", "")
@@ -669,6 +816,7 @@ def _populate_browser_cache(force: bool = False) -> bool:
                     }
                     category_items.append(entry)
                     flat_items.append(entry)
+                    cat_count += 1
                     total += 1
 
                     # Enqueue folders for deeper scanning
@@ -1547,14 +1695,39 @@ def set_tempo(ctx: Context, tempo: float) -> str:
 @mcp.tool()
 def load_instrument_or_effect(ctx: Context, track_index: int, uri: str) -> str:
     """
-    Load an instrument or effect onto a track using its URI.
-    
+    Load an instrument or effect onto a track using its URI or name.
+
     Parameters:
     - track_index: The index of the track to load the instrument on
-    - uri: The URI of the instrument or effect to load (e.g., 'query:Synths#Instrument%20Rack:Bass:FileId_5116')
+    - uri: The URI of the instrument/effect to load, OR a well-known device name.
+
+    Well-known device names (pass these directly — no need to search_browser first):
+
+      Instruments: Analog, Collision, Drift, Electric, Meld, Operator, Sampler,
+                   Simpler, Tension, Wavetable, Instrument Rack, External Instrument
+
+      Audio Effects: Amp, Auto Filter, Auto Pan, Beat Repeat, Cabinet, Channel EQ,
+                     Chorus-Ensemble, Compressor, Convolution Reverb, Corpus, Delay,
+                     Drum Buss, Dynamic Tube, Echo, EQ Eight, EQ Three, Erosion,
+                     Filter Delay, Flanger, Frequency Shifter, Gate, Glue Compressor,
+                     Grain Delay, Hybrid Reverb, Limiter, Looper, Multiband Dynamics,
+                     Overdrive, Pedal, Phaser-Flanger, Redux, Resonators, Reverb,
+                     Saturator, Shifter, Spectral Resonator, Spectral Time, Spectrum,
+                     Tuner, Utility, Vinyl Distortion, Vocoder, Audio Effect Rack
+
+      MIDI Effects: Arpeggiator, Chord, Note Length, Pitch, Random, Scale,
+                    Velocity, MIDI Effect Rack
+
+    Examples:
+      load_instrument_or_effect(track_index=0, uri="Analog")
+      load_instrument_or_effect(track_index=2, uri="Reverb")
+      load_instrument_or_effect(track_index=1, uri="query:Synths#Operator")
+
+    For presets or third-party items, use search_browser() to find the full URI.
     """
     try:
         _validate_index(track_index, "track_index")
+        uri = _resolve_device_uri(uri)
         ableton = get_ableton_connection()
         result = ableton.send_command("load_browser_item", {
             "track_index": track_index,
