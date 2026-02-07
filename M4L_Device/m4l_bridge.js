@@ -431,6 +431,11 @@ function discoverChainsAtPath(devicePath) {
         has_drum_pads: hasDrumPads
     };
 
+    // Reuse 2 LiveAPI cursors via goto() to avoid exhausting Max's object table.
+    // Previously created ~193 LiveAPI objects for a 16-pad drum rack; now only 3 total.
+    var cursor = new LiveAPI(null, devicePath);
+    var innerCursor = new LiveAPI(null, devicePath);
+
     // Enumerate chains
     var chainCount = 0;
     try { chainCount = parseInt(deviceApi.getcount("chains")); } catch (e) {}
@@ -438,29 +443,28 @@ function discoverChainsAtPath(devicePath) {
     var chains = [];
     for (var c = 0; c < chainCount; c++) {
         var chainPath = devicePath + " chains " + c;
-        var chainApi  = new LiveAPI(null, chainPath);
-        if (!chainApi || !chainApi.id || parseInt(chainApi.id) === 0) continue;
+        cursor.goto(chainPath);
+        if (!cursor.id || parseInt(cursor.id) === 0) continue;
 
         var chainInfo = {
             index: c,
             name: ""
         };
-        try { chainInfo.name = chainApi.get("name").toString(); } catch (e) {}
+        try { chainInfo.name = cursor.get("name").toString(); } catch (e) {}
 
         // Enumerate devices in this chain
         var devCount = 0;
-        try { devCount = parseInt(chainApi.getcount("devices")); } catch (e) {}
+        try { devCount = parseInt(cursor.getcount("devices")); } catch (e) {}
 
         var chainDevices = [];
         for (var d = 0; d < devCount; d++) {
-            var cdPath = chainPath + " devices " + d;
-            var cdApi  = new LiveAPI(null, cdPath);
-            if (!cdApi || !cdApi.id || parseInt(cdApi.id) === 0) continue;
+            innerCursor.goto(chainPath + " devices " + d);
+            if (!innerCursor.id || parseInt(innerCursor.id) === 0) continue;
 
             var cdInfo = { index: d, name: "", class_name: "" };
-            try { cdInfo.name = cdApi.get("name").toString(); } catch (e) {}
-            try { cdInfo.class_name = cdApi.get("class_name").toString(); } catch (e) {}
-            try { cdInfo.can_have_chains = (parseInt(cdApi.get("can_have_chains")) === 1); } catch (e) {}
+            try { cdInfo.name = innerCursor.get("name").toString(); } catch (e) {}
+            try { cdInfo.class_name = innerCursor.get("class_name").toString(); } catch (e) {}
+            try { cdInfo.can_have_chains = (parseInt(innerCursor.get("can_have_chains")) === 1); } catch (e) {}
             chainDevices.push(cdInfo);
         }
         chainInfo.devices = chainDevices;
@@ -478,34 +482,33 @@ function discoverChainsAtPath(devicePath) {
 
         for (var p = 0; p < padCount; p++) {
             var padPath = devicePath + " drum_pads " + p;
-            var padApi  = new LiveAPI(null, padPath);
-            if (!padApi || !padApi.id || parseInt(padApi.id) === 0) continue;
+            cursor.goto(padPath);
+            if (!cursor.id || parseInt(cursor.id) === 0) continue;
 
             // Only include pads that have chains (i.e. have content)
             var padChainCount = 0;
-            try { padChainCount = parseInt(padApi.getcount("chains")); } catch (e) {}
+            try { padChainCount = parseInt(cursor.getcount("chains")); } catch (e) {}
             if (padChainCount === 0) continue;
 
             var padInfo = { index: p, name: "", note: -1, chain_count: padChainCount };
-            try { padInfo.name = padApi.get("name").toString(); } catch (e) {}
-            try { padInfo.note = parseInt(padApi.get("note")); } catch (e) {}
-            try { padInfo.mute = (parseInt(padApi.get("mute")) === 1); } catch (e) {}
-            try { padInfo.solo = (parseInt(padApi.get("solo")) === 1); } catch (e) {}
+            try { padInfo.name = cursor.get("name").toString(); } catch (e) {}
+            try { padInfo.note = parseInt(cursor.get("note")); } catch (e) {}
+            try { padInfo.mute = (parseInt(cursor.get("mute")) === 1); } catch (e) {}
+            try { padInfo.solo = (parseInt(cursor.get("solo")) === 1); } catch (e) {}
 
             // Get devices in the first chain of this pad
             if (padChainCount > 0) {
                 var padChainPath = padPath + " chains 0";
-                var padChainApi  = new LiveAPI(null, padChainPath);
+                innerCursor.goto(padChainPath);
                 var padDevCount = 0;
-                try { padDevCount = parseInt(padChainApi.getcount("devices")); } catch (e) {}
+                try { padDevCount = parseInt(innerCursor.getcount("devices")); } catch (e) {}
                 var padDevices = [];
                 for (var pd = 0; pd < padDevCount; pd++) {
-                    var pdPath = padChainPath + " devices " + pd;
-                    var pdApi  = new LiveAPI(null, pdPath);
-                    if (!pdApi || !pdApi.id || parseInt(pdApi.id) === 0) continue;
+                    innerCursor.goto(padChainPath + " devices " + pd);
+                    if (!innerCursor.id || parseInt(innerCursor.id) === 0) continue;
                     var pdInfo = { index: pd, name: "", class_name: "" };
-                    try { pdInfo.name = pdApi.get("name").toString(); } catch (e) {}
-                    try { pdInfo.class_name = pdApi.get("class_name").toString(); } catch (e) {}
+                    try { pdInfo.name = innerCursor.get("name").toString(); } catch (e) {}
+                    try { pdInfo.class_name = innerCursor.get("class_name").toString(); } catch (e) {}
                     padDevices.push(pdInfo);
                 }
                 padInfo.devices = padDevices;

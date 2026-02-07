@@ -46,6 +46,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 ### Bug Fixes & Improvements
 - **Fixed `set_wavetable_properties` crash**: removed post-set `get()` read-back verification that crashed Ableton. Now uses fire-and-forget `set()` with two-tier property classification: Tier 1 (oscillator properties — reliable) and Tier 2 (unison/filter/voice — documented as limited)
 - **Fixed `discover_rack_chains` nested rack support**: added optional `chain_path` parameter to target devices inside chains (e.g. `"chains 0 devices 0"` for nested racks)
+- **Fixed `discover_rack_chains` crash on large drum racks**: refactored `discoverChainsAtPath` to reuse LiveAPI objects via `goto()` instead of creating ~193 new objects per call. Now uses 3 cursor objects total, preventing Max `[js]` memory exhaustion
 - **Fixed `grid_to_clip` silent failures**: `except Exception: pass` replaced with proper error returns
 - **Fixed `generate_preset` device targeting**: improved docstring guidance to target synth, not effects
 - **Reduced bruteforce resolver logging**: removed per-iteration logging from `devices.py` — only MATCH and ERROR logged now
