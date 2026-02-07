@@ -649,13 +649,13 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 
 ## Limitations
 
-- VST/AU plugins cannot be loaded directly (Ableton API limitation) — save as Instrument Rack first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`
-- Complex arrangements should be broken into smaller steps
-- Clip automation works best with MIDI clips and basic device parameters
-- Arrangement view is limited: clips can be placed via `duplicate_clip_to_arrangement` but not edited directly in arrangement. Arrangement automation is not supported by Ableton's API
-- Extended note properties (probability, velocity_deviation, release_velocity) require Live 11+
-- **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but **cannot be written** via `set_wavetable_properties`. This is a Max for Live `LiveAPI.set()` limitation — these properties are documented in the LOM but `set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably.
-- Always save your work before extensive experimentation
+- **VST/AU plugins** cannot be loaded directly (Ableton API limitation) — save as Instrument Rack preset first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`. Built-in Ableton devices can be loaded by name (e.g. `"Wavetable"`, `"Reverb"`) — auto-resolved via browser cache
+- **Arrangement clips** are read-only after placement — edit clips in session view, then place on the timeline with `duplicate_clip_to_arrangement`. Use `get_arrangement_clips` to read, and `delete_time` / `duplicate_time` / `insert_silence` for structural edits
+- **Arrangement automation** is supported via `create_track_automation` and `clear_track_automation` for track-level parameter automation (Volume, Pan, Sends, device parameters)
+- **Clip automation** supports mixer parameters (Volume, Pan, Sends) and all device parameters on both MIDI and audio clips. Use `create_clip_automation`, `get_clip_automation`, `clear_clip_automation`, and `list_clip_automated_parameters`
+- **Extended note properties** (probability, velocity_deviation, release_velocity) require Live 11+. Basic note operations work on Live 10+
+- **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but **cannot be written** via `set_wavetable_properties`. This is a Max for Live `LiveAPI.set()` limitation — these properties are documented in the LOM but `set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably
+- **Large sessions**: For best results, break arrangement tasks into smaller tool calls (e.g. place clips first, then add automation, then adjust mixing)
 
 ## Troubleshooting
 
@@ -665,6 +665,9 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 - **Remote Script not updating**: Delete `__pycache__/__init__.cpython-*.pyc` in the Ableton MIDI Remote Scripts folder, then reload the control surface
 - **Multiple server instances**: The server now has a singleton guard (port 9881) — a second instance will exit automatically. If the port is stuck, set `ABLETON_MCP_LOCK_PORT` env var
 - **Dashboard not loading**: Make sure Claude Desktop is running the latest wheel (check `claude_desktop_config.json`). Restart Claude Desktop after rebuilding. If port 9880 is in use, set `ABLETON_MCP_DASHBOARD_PORT` env var
+- **M4L bridge not responding**: Reload the `[js]` object in the M4L device (click the `[js m4l_bridge.js]` box in the Max patch). If that fails, remove and re-add the M4L device to a track
+- **Batch parameter operations slow**: Large batch operations (>10 parameters) use chunking with 50ms delays for stability — expect ~150ms per parameter. This prevents Ableton crashes during heavy parameter writes
+- **Save your work**: Always save your Live Set before extensive AI-driven experimentation — parameter changes and device loading cannot be undone via Ctrl+Z in all cases
 
 ## Disclaimer
 
