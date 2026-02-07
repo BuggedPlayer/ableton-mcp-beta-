@@ -86,8 +86,9 @@ def get_song_transport(song, ctrl=None):
 def set_song_time(song, time, ctrl=None):
     """Set the arrangement playhead position."""
     try:
-        song.current_song_time = max(0.0, float(time))
-        return {"current_time": song.current_song_time}
+        target = max(0.0, float(time))
+        song.current_song_time = target
+        return {"current_time": target}
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error setting song time: " + str(e))
@@ -103,11 +104,12 @@ def set_song_loop(song, enabled, start, length, ctrl=None):
             song.loop_start = max(0.0, float(start))
         if length is not None:
             song.loop_length = max(0.0, float(length))
-        return {
-            "loop_enabled": song.loop,
-            "loop_start": song.loop_start,
-            "loop_length": song.loop_length,
-        }
+        # Return the values we SET (not read-back, which can be stale)
+        result = {}
+        result["loop_enabled"] = bool(enabled) if enabled is not None else song.loop
+        result["loop_start"] = max(0.0, float(start)) if start is not None else song.loop_start
+        result["loop_length"] = max(0.0, float(length)) if length is not None else song.loop_length
+        return result
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error setting song loop: " + str(e))

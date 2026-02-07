@@ -73,30 +73,56 @@ def add_notes_extended(song, track_index, clip_index, notes, ctrl=None):
                     spec["release_velocity"] = max(0, min(127, int(n["release_velocity"])))
                 note_specs.append(spec)
 
-            clip.begin_undo_step()
-            try:
-                clip.add_new_notes(tuple([
-                    {
-                        "pitch": s["pitch"],
-                        "start_time": s["start_time"],
-                        "duration": s["duration"],
-                        "velocity": s["velocity"],
-                        "mute": s["mute"],
-                        "probability": s.get("probability", 1.0),
-                        "velocity_deviation": s.get("velocity_deviation", 0.0),
-                        "release_velocity": s.get("release_velocity", 64),
-                    } for s in note_specs
-                ]))
-            except Exception:
-                # If add_new_notes fails with dict format, try legacy
-                live_notes = []
-                for s in note_specs:
-                    live_notes.append((s["pitch"], s["start_time"], s["duration"], int(s["velocity"]), s["mute"]))
-                clip.set_notes(tuple(live_notes))
-            finally:
-                clip.end_undo_step()
+            extended = False
 
-            return {"note_count": len(note_specs), "extended": True}
+            # Strategy 1: Try Live 12+ MidiNoteSpecification API
+            try:
+                import Live
+                if hasattr(Live.Clip, 'MidiNoteSpecification'):
+                    specs = []
+                    for s in note_specs:
+                        kwargs = {
+                            "pitch": s["pitch"],
+                            "start_time": s["start_time"],
+                            "duration": s["duration"],
+                            "velocity": s["velocity"],
+                            "mute": s["mute"],
+                        }
+                        if "probability" in s:
+                            kwargs["probability"] = s["probability"]
+                        if "velocity_deviation" in s:
+                            kwargs["velocity_deviation"] = s["velocity_deviation"]
+                        if "release_velocity" in s:
+                            kwargs["release_velocity"] = s["release_velocity"]
+                        specs.append(Live.Clip.MidiNoteSpecification(**kwargs))
+                    clip.add_new_notes(tuple(specs))
+                    extended = True
+                else:
+                    raise AttributeError("MidiNoteSpecification not available")
+            except Exception as e1:
+                # Strategy 2: Try dict format with add_new_notes
+                try:
+                    clip.add_new_notes(tuple([
+                        {
+                            "pitch": s["pitch"],
+                            "start_time": s["start_time"],
+                            "duration": s["duration"],
+                            "velocity": s["velocity"],
+                            "mute": s["mute"],
+                            "probability": s.get("probability", 1.0),
+                            "velocity_deviation": s.get("velocity_deviation", 0.0),
+                            "release_velocity": s.get("release_velocity", 64),
+                        } for s in note_specs
+                    ]))
+                    extended = True
+                except Exception as e2:
+                    # Strategy 3: Legacy set_notes fallback (tuples)
+                    live_notes = []
+                    for s in note_specs:
+                        live_notes.append((s["pitch"], s["start_time"], s["duration"], int(s["velocity"]), s["mute"]))
+                    clip.set_notes(tuple(live_notes))
+
+            return {"note_count": len(note_specs), "extended": extended}
         else:
             # Legacy fallback
             live_notes = []

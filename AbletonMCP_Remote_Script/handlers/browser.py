@@ -387,9 +387,14 @@ def search_browser(song, query, category, ctrl=None):
                     "uri": item.uri if hasattr(item, "uri") else None,
                 }
                 results.append(result_item)
-            if hasattr(item, "children") and item.children:
-                for child in item.children:
-                    search_item(child, depth + 1, max_depth)
+            if hasattr(item, "children"):
+                try:
+                    children = item.children
+                except Exception:
+                    return
+                if children:
+                    for child in children:
+                        search_item(child, depth + 1, max_depth)
 
         _categories = {
             "instruments": "instruments",

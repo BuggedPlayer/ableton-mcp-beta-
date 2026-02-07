@@ -52,11 +52,18 @@ def create_clip_automation(song, track_index, clip_index, parameter_name, automa
         param = _find_parameter(song, track_index, parameter_name)
 
         if not hasattr(clip, 'automation_envelope'):
-            raise Exception("Clip does not support automation envelopes")
+            if hasattr(clip, 'create_automation_envelope'):
+                envelope = clip.create_automation_envelope(param)
+            else:
+                raise Exception("Clip does not support automation envelopes")
+        else:
+            envelope = clip.automation_envelope(param)
 
-        envelope = clip.automation_envelope(param)
         if envelope is None:
-            raise Exception("Could not get automation envelope for parameter '{0}'".format(parameter_name))
+            if hasattr(clip, 'create_automation_envelope'):
+                envelope = clip.create_automation_envelope(param)
+            if envelope is None:
+                raise Exception("Could not get automation envelope for parameter '{0}'".format(parameter_name))
 
         # Add automation points
         for point in automation_points:
@@ -64,10 +71,21 @@ def create_clip_automation(song, track_index, clip_index, parameter_name, automa
             value = float(point.get("value", 0.0))
             # Clamp value to parameter range
             clamped = max(param.min, min(param.max, value))
-            try:
-                envelope.insert_step(time_val, 0.0, clamped)
-            except Exception:
-                pass
+            # Try multiple methods for adding automation points
+            added = False
+            for method_name in ("insert_step", "create_step", "insert_point"):
+                if hasattr(envelope, method_name):
+                    try:
+                        getattr(envelope, method_name)(time_val, 0.0, clamped)
+                        added = True
+                        break
+                    except Exception:
+                        continue
+            if not added:
+                try:
+                    envelope.insert_step(time_val, 0.0, clamped)
+                except Exception:
+                    pass
 
         return {
             "parameter": parameter_name,
