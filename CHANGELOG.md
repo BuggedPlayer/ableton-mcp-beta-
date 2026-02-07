@@ -65,6 +65,20 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 - Cache holds up to **5000 items**, auto-refreshes every **5 minutes**
 - Fixes: `search_browser` no longer times out; Claude gets correct URIs instead of guessing wrong ones
 
+### Performance & Code Streamlining
+- **BFS queue fix**: Browser cache population now uses `deque.popleft()` (O(1)) instead of `list.pop(0)` (O(n))
+- **Eliminated duplicate cache**: Removed unused per-category dict; added `_browser_cache_by_category` index for O(1) filtered search
+- **Module-level `_CATEGORY_DISPLAY` constant**: No longer rebuilt on every `search_browser`/`get_browser_tree` call
+- **Redundant double-lock removed**: `_get_browser_cache()` no longer acquires the lock twice on cache miss
+- **Smarter cache warmup**: Polls for Ableton connection every 0.5s instead of blind 3s sleep — starts scanning as soon as ready
+- **UDP drain bounded**: Socket drain loops capped at 100 iterations (was unbounded `while True`)
+- **Hot-path logging → DEBUG**: Per-command INFO logs (send, receive, status) downgraded to DEBUG — eliminates 3 I/O calls per tool invocation
+- **Lazy `%s` formatting**: ~25 logger calls switched from f-strings to `%s` style — skips string construction when log level is filtered
+- **Cheaper dashboard log handler**: Stores lightweight tuples, defers timestamp formatting to when dashboard is actually viewed
+- **Dashboard status build**: `top_tools` computed inside the lock — no more full dict copy on every 3s refresh
+- **Fixed stale values**: Dashboard `tool_count` and comment updated from 81 → 131
+- **Clean import**: `import collections` → `from collections import deque`
+
 ### Improvements
 - Package renamed to `ableton-mcp-stable` for stable release channel
 - Fixed server version detection (`importlib.metadata` now uses correct package name)

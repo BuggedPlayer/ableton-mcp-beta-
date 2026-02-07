@@ -12,7 +12,7 @@ import base64
 import struct
 import os
 import threading
-import collections
+from collections import deque
 from datetime import datetime, timezone
 
 # Configure logging
@@ -36,10 +36,10 @@ class AbletonConnection:
             self.sock.settimeout(5.0)
             self.sock.connect((self.host, self.port))
             self._recv_buffer = ""  # Clear buffer on new connection
-            logger.info(f"Connected to Ableton at {self.host}:{self.port}")
+            logger.info("Connected to Ableton at %s:%s", self.host, self.port)
             return True
         except Exception as e:
-            logger.error(f"Failed to connect to Ableton: {str(e)}")
+            logger.error("Failed to connect to Ableton: %s", e)
             if self.sock:
                 try:
                     self.sock.close()
@@ -54,7 +54,7 @@ class AbletonConnection:
             try:
                 self.sock.close()
             except Exception as e:
-                logger.error(f"Error disconnecting from Ableton: {str(e)}")
+                logger.error("Error disconnecting from Ableton: %s", e)
             finally:
                 self.sock = None
 
@@ -73,7 +73,7 @@ class AbletonConnection:
                     line = line.strip()
                     if line:
                         result = json.loads(line)
-                        logger.info(f"Received complete response ({len(line)} chars)")
+                        logger.debug("Received complete response (%d chars)", len(line))
                         return result
 
                 try:
@@ -86,12 +86,12 @@ class AbletonConnection:
                     logger.warning("Socket timeout during receive")
                     raise
                 except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-                    logger.error(f"Socket connection error during receive: {str(e)}")
+                    logger.error("Socket connection error during receive: %s", e)
                     raise
         except (socket.timeout, json.JSONDecodeError):
             raise
         except Exception as e:
-            logger.error(f"Error during receive: {str(e)}")
+            logger.error("Error during receive: %s", e)
             raise
 
     def _reconnect(self) -> bool:
@@ -150,7 +150,7 @@ class AbletonConnection:
             }
 
             try:
-                logger.info(f"Sending command: {command_type} (attempt {attempt})")
+                logger.debug("Sending command: %s (attempt %d)", command_type, attempt)
 
                 # Send the command as newline-delimited JSON
                 self.sock.sendall((json.dumps(command) + '\n').encode('utf-8'))
@@ -164,10 +164,10 @@ class AbletonConnection:
                 timeout = 15.0 if is_modifying else 10.0
                 # Receive the response (already parsed by receive_full_response)
                 response = self.receive_full_response(self.sock, timeout=timeout)
-                logger.info(f"Response status: {response.get('status', 'unknown')}")
+                logger.debug("Response status: %s", response.get('status', 'unknown'))
 
                 if response.get("status") == "error":
-                    logger.error(f"Ableton error: {response.get('message')}")
+                    logger.error("Ableton error: %s", response.get('message'))
                     raise Exception(response.get("message", "Unknown error from Ableton"))
 
                 # Add a small delay after modifying commands complete
@@ -178,7 +178,7 @@ class AbletonConnection:
                 return response.get("result", {})
 
             except Exception as e:
-                logger.error(f"Command '{command_type}' attempt {attempt} failed: {str(e)}")
+                logger.error("Command '%s' attempt %d failed: %s", command_type, attempt, e)
                 # Close the broken socket and clear buffer
                 self.disconnect()
                 self._recv_buffer = ""
@@ -190,7 +190,7 @@ class AbletonConnection:
                         raise ConnectionError("Failed to reconnect to Ableton")
                     logger.info("Reconnected, retrying command...")
                 else:
-                    raise Exception(f"Command '{command_type}' failed after {max_attempts} attempts: {str(e)}")
+                    raise Exception(f"Command '{command_type}' failed after {max_attempts} attempts: {e}")
 
 
 @dataclass
@@ -218,10 +218,10 @@ class M4LConnection:
             self.recv_sock.bind(("127.0.0.1", self.recv_port))
             self.recv_sock.settimeout(5.0)
             self._connected = True
-            logger.info(f"M4L UDP sockets ready (send→:{self.send_port}, recv←:{self.recv_port})")
+            logger.info("M4L UDP sockets ready (send→:%d, recv←:%d)", self.send_port, self.recv_port)
             return True
         except Exception as e:
-            logger.error(f"Failed to set up M4L UDP connection: {str(e)}")
+            logger.error("Failed to set up M4L UDP connection: %s", e)
             self.disconnect()
             return False
 
@@ -330,7 +330,7 @@ class M4LConnection:
             # Drain any stale data in the recv socket before sending
             self.recv_sock.setblocking(False)
             try:
-                while True:
+                for _ in range(100):
                     self.recv_sock.recvfrom(65535)
             except (BlockingIOError, OSError):
                 pass
@@ -340,7 +340,7 @@ class M4LConnection:
             try:
                 self.send_sock.sendto(osc, (self.send_host, self.send_port))
             except Exception as e:
-                logger.error(f"Failed to send UDP command to M4L (attempt {attempt}): {str(e)}")
+                logger.error("Failed to send UDP command to M4L (attempt %d): %s", attempt, e)
                 if attempt < max_attempts:
                     self.disconnect()
                     time.sleep(0.2)
@@ -353,10 +353,10 @@ class M4LConnection:
                 # Verify request_id matches (warn on mismatch but don't fail)
                 resp_id = result.get("id", "")
                 if resp_id and resp_id != request_id:
-                    logger.warning(f"M4L response id mismatch: expected {request_id}, got {resp_id}")
+                    logger.warning("M4L response id mismatch: expected %s, got %s", request_id, resp_id)
                 return result
             except socket.timeout:
-                logger.warning(f"M4L response timeout (attempt {attempt})")
+                logger.warning("M4L response timeout (attempt %d)", attempt)
                 if attempt < max_attempts:
                     self.disconnect()
                     time.sleep(0.2)
@@ -427,7 +427,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             ableton = get_ableton_connection()
             logger.info("Successfully connected to Ableton on startup")
         except Exception as e:
-            logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
+            logger.warning("Could not connect to Ableton on startup: %s", e)
             logger.warning("Make sure the Ableton Remote Script is running")
 
         # Auto-connect M4L bridge in background (device may need time to init)
@@ -452,7 +452,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
                     # Drain stale data
                     conn.recv_sock.setblocking(False)
                     try:
-                        while True:
+                        for _ in range(100):
                             conn.recv_sock.recvfrom(65535)
                     except (BlockingIOError, OSError):
                         pass
@@ -466,14 +466,14 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
                     data, _ = conn.recv_sock.recvfrom(65535)
                     result = conn._parse_m4l_response(data)
                     if result.get("status") == "success":
-                        logger.info(f"M4L bridge auto-connected on attempt {attempt}")
+                        logger.info("M4L bridge auto-connected on attempt %d", attempt)
                         _m4l_ping_cache["result"] = True
                         _m4l_ping_cache["timestamp"] = time.time()
                         return
                 except socket.timeout:
-                    logger.info(f"M4L auto-connect {attempt}/15: no response, retrying...")
+                    logger.info("M4L auto-connect %d/15: no response, retrying...", attempt)
                 except Exception as e:
-                    logger.info(f"M4L auto-connect {attempt}/15: {str(e)}")
+                    logger.info("M4L auto-connect %d/15: %s", attempt, e)
                 time.sleep(2)
             logger.warning("M4L bridge not available after 15 attempts — will retry when needed")
 
@@ -483,16 +483,19 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         try:
             _start_dashboard_server()
         except Exception as e:
-            logger.warning(f"Dashboard failed to start: {e}")
+            logger.warning("Dashboard failed to start: %s", e)
 
         # Pre-populate browser cache in background (so search_browser is instant)
         def _browser_cache_warmup():
             """Background thread: wait for Ableton connection, then scan browser."""
-            time.sleep(3)  # give Ableton connection time to settle
+            for _ in range(30):  # poll up to 15s for Ableton connection
+                if _ableton_connection and _ableton_connection.sock:
+                    break
+                time.sleep(0.5)
             try:
                 _populate_browser_cache()
             except Exception as e:
-                logger.warning(f"Browser cache warmup failed: {e}")
+                logger.warning("Browser cache warmup failed: %s", e)
 
         threading.Thread(target=_browser_cache_warmup, daemon=True, name="browser-cache-warmup").start()
 
@@ -527,27 +530,29 @@ _param_map_store: Dict[str, Dict[str, Any]] = {}
 
 # Web dashboard state
 _server_start_time: float = 0.0
-_tool_call_log: collections.deque = collections.deque(maxlen=50)
+_tool_call_log: deque = deque(maxlen=50)
 _tool_call_counts: Dict[str, int] = {}
 _tool_call_lock = threading.Lock()
 _dashboard_server = None
 DASHBOARD_PORT = int(os.environ.get("ABLETON_MCP_DASHBOARD_PORT", "9880"))
-_server_log_buffer: collections.deque = collections.deque(maxlen=200)
+_server_log_buffer: deque = deque(maxlen=200)
 _server_log_lock = threading.Lock()
 
 
 class _DashboardLogHandler(logging.Handler):
-    """Captures log records into the dashboard ring buffer."""
+    """Captures log records into the dashboard ring buffer.
+
+    Stores lightweight tuples (created_float, level_str, message_str) to
+    avoid formatting timestamps on every log message.  Timestamps are
+    formatted only when the dashboard is actually viewed.
+    """
 
     def emit(self, record):
         try:
-            entry = {
-                "ts": datetime.now().strftime("%H:%M:%S"),
-                "level": record.levelname,
-                "msg": record.getMessage(),
-            }
             with _server_log_lock:
-                _server_log_buffer.append(entry)
+                _server_log_buffer.append(
+                    (record.created, record.levelname, record.getMessage())
+                )
         except Exception:
             pass
 
@@ -560,8 +565,8 @@ _m4l_ping_cache = {"result": False, "timestamp": 0.0}
 _M4L_PING_CACHE_TTL = 5.0
 
 # Browser cache — scans Ableton's browser tree and caches all items for instant search
-_browser_cache: Dict[str, List[Dict[str, Any]]] = {}  # category -> list of items
 _browser_cache_flat: List[Dict[str, Any]] = []  # flat list for fast substring search
+_browser_cache_by_category: Dict[str, List[Dict[str, Any]]] = {}  # display_name -> items (index for filtered search)
 _browser_cache_timestamp: float = 0.0
 _BROWSER_CACHE_TTL = 300.0  # 5 minutes
 _browser_cache_lock = threading.Lock()
@@ -580,6 +585,15 @@ _BROWSER_CATEGORIES = [
 _BROWSER_CACHE_MAX_DEPTH = 4   # category/instrument/subfolder/preset
 _BROWSER_CACHE_MAX_ITEMS = 5000
 
+# Maps category keys to display names (used by search_browser and get_browser_tree)
+_CATEGORY_DISPLAY = {
+    "instruments": "Instruments",
+    "sounds": "Sounds",
+    "drums": "Drums",
+    "audio_effects": "Audio Effects",
+    "midi_effects": "MIDI Effects",
+}
+
 
 def _populate_browser_cache(force: bool = False) -> bool:
     """Scan Ableton's browser tree and cache all items for instant search.
@@ -588,80 +602,96 @@ def _populate_browser_cache(force: bool = False) -> bool:
     (e.g. sounds/Operator/Bass/FM Bass) are included.  Each level is a
     single get_browser_items_at_path call which completes well within the
     socket timeout.  Total items are capped at 5000 to prevent runaway scans.
+
+    Uses a **dedicated TCP connection** to avoid corrupting the shared global
+    connection when the BFS scan sends many rapid commands.
     """
-    global _browser_cache, _browser_cache_flat, _browser_cache_timestamp
+    global _browser_cache_flat, _browser_cache_by_category, _browser_cache_timestamp
 
     now = time.time()
     with _browser_cache_lock:
         if not force and _browser_cache_flat and (now - _browser_cache_timestamp) < _BROWSER_CACHE_TTL:
             return True  # cache is still fresh
 
+    # Use a dedicated connection so rapid BFS commands don't corrupt the
+    # shared global socket (which other tools need concurrently).
+    ableton = AbletonConnection(host="localhost", port=9877)
     try:
-        ableton = get_ableton_connection()
+        if not ableton.connect():
+            logger.warning("Browser cache: cannot connect to Ableton")
+            return False
     except Exception as e:
-        logger.warning(f"Browser cache: cannot connect to Ableton: {e}")
+        logger.warning("Browser cache: cannot connect to Ableton: %s", e)
         return False
 
     logger.info("Browser cache: starting scan...")
-    cache_by_category: Dict[str, List[Dict[str, Any]]] = {}
     flat_items: List[Dict[str, Any]] = []
+    by_display: Dict[str, List[Dict[str, Any]]] = {}
     total = 0
 
-    for path_root, display_name in _BROWSER_CATEGORIES:
-        category_items: List[Dict[str, Any]] = []
+    try:
+        for path_root, display_name in _BROWSER_CATEGORIES:
+            category_items: List[Dict[str, Any]] = []
 
-        # BFS queue: (browser_path, depth)
-        queue: List[tuple] = [(path_root, 0)]
+            # BFS queue: (browser_path, depth)
+            queue = deque([(path_root, 0)])
 
-        while queue and total < _BROWSER_CACHE_MAX_ITEMS:
-            current_path, depth = queue.pop(0)
+            while queue and total < _BROWSER_CACHE_MAX_ITEMS:
+                current_path, depth = queue.popleft()
 
-            try:
-                result = ableton.send_command("get_browser_items_at_path", {"path": current_path})
-            except Exception as e:
-                logger.warning(f"Browser cache: failed to read '{current_path}': {e}")
-                continue
-
-            if "error" in result:
-                continue
-
-            for item in result.get("items", []):
-                if total >= _BROWSER_CACHE_MAX_ITEMS:
-                    break
-
-                name = item.get("name", "")
-                if not name:
+                try:
+                    result = ableton.send_command("get_browser_items_at_path", {"path": current_path})
+                except Exception as e:
+                    logger.warning("Browser cache: failed to read '%s': %s", current_path, e)
                     continue
 
-                item_path = f"{current_path}/{name}"
-                entry = {
-                    "name": name,
-                    "search_name": name.lower(),
-                    "uri": item.get("uri", ""),
-                    "is_loadable": item.get("is_loadable", False),
-                    "is_folder": item.get("is_folder", False),
-                    "is_device": item.get("is_device", False),
-                    "category": display_name,
-                    "path": item_path,
-                }
-                category_items.append(entry)
-                flat_items.append(entry)
-                total += 1
+                if "error" in result:
+                    continue
 
-                # Enqueue folders for deeper scanning
-                if item.get("is_folder", False) and depth < _BROWSER_CACHE_MAX_DEPTH:
-                    queue.append((item_path, depth + 1))
+                for item in result.get("items", []):
+                    if total >= _BROWSER_CACHE_MAX_ITEMS:
+                        break
 
-        cache_by_category[path_root] = category_items
-        logger.info(f"Browser cache: '{display_name}' — {len(category_items)} items")
+                    name = item.get("name", "")
+                    if not name:
+                        continue
 
-    with _browser_cache_lock:
-        _browser_cache = cache_by_category
-        _browser_cache_flat = flat_items
-        _browser_cache_timestamp = time.time()
+                    item_path = f"{current_path}/{name}"
+                    entry = {
+                        "name": name,
+                        "search_name": name.lower(),
+                        "uri": item.get("uri", ""),
+                        "is_loadable": item.get("is_loadable", False),
+                        "is_folder": item.get("is_folder", False),
+                        "is_device": item.get("is_device", False),
+                        "category": display_name,
+                        "path": item_path,
+                    }
+                    category_items.append(entry)
+                    flat_items.append(entry)
+                    total += 1
 
-    logger.info(f"Browser cache: populated with {total} items across {len(cache_by_category)} categories")
-    return True
+                    # Enqueue folders for deeper scanning
+                    if item.get("is_folder", False) and depth < _BROWSER_CACHE_MAX_DEPTH:
+                        queue.append((item_path, depth + 1))
+
+            by_display[display_name] = category_items
+            logger.info("Browser cache: '%s' — %d items", display_name, len(category_items))
+
+        with _browser_cache_lock:
+            _browser_cache_flat = flat_items
+            _browser_cache_by_category = by_display
+            _browser_cache_timestamp = time.time()
+
+        logger.info("Browser cache: populated with %d items across %d categories", total, len(by_display))
+        return True
+
+    finally:
+        # Always close the dedicated connection when done
+        try:
+            ableton.disconnect()
+        except Exception:
+            pass
 
 
 def _get_browser_cache() -> List[Dict[str, Any]]:
@@ -670,12 +700,11 @@ def _get_browser_cache() -> List[Dict[str, Any]]:
         if _browser_cache_flat and (time.time() - _browser_cache_timestamp) < _BROWSER_CACHE_TTL:
             return _browser_cache_flat
     _populate_browser_cache()
-    with _browser_cache_lock:
-        return _browser_cache_flat
+    return _browser_cache_flat
 
 
 # ---------------------------------------------------------------------------
-# Tool call instrumentation — captures all 81 tool calls for the dashboard
+# Tool call instrumentation — captures all 131 tool calls for the dashboard
 # ---------------------------------------------------------------------------
 _original_call_tool = mcp.call_tool
 
@@ -943,13 +972,15 @@ def _build_status_json() -> dict:
 
     with _tool_call_lock:
         recent = list(_tool_call_log)
-        counts_copy = dict(_tool_call_counts)
+        total = sum(_tool_call_counts.values())
+        top_tools = sorted(_tool_call_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
     with _server_log_lock:
-        server_logs = list(_server_log_buffer)
-
-    total = sum(counts_copy.values())
-    top_tools = sorted(counts_copy.items(), key=lambda x: x[1], reverse=True)[:10]
+        # Format timestamps from stored tuples (created_float, level, msg)
+        server_logs = [
+            {"ts": datetime.fromtimestamp(ts).strftime("%H:%M:%S"), "level": lvl, "msg": msg}
+            for ts, lvl, msg in _server_log_buffer
+        ]
 
     return {
         "version": _get_server_version(),
@@ -966,7 +997,7 @@ def _build_status_json() -> dict:
         "top_tools": top_tools,
         "recent_calls": recent,
         "server_logs": server_logs,
-        "tool_count": 81,
+        "tool_count": 131,
     }
 
 
@@ -1006,7 +1037,7 @@ def _start_dashboard_server():
 
     thread = threading.Thread(target=_run, daemon=True, name="dashboard-http")
     thread.start()
-    logger.info(f"Dashboard started at http://127.0.0.1:{DASHBOARD_PORT}")
+    logger.info("Dashboard started at http://127.0.0.1:%d", DASHBOARD_PORT)
 
 
 def _stop_dashboard_server():
@@ -1031,7 +1062,7 @@ def get_ableton_connection():
             _ableton_connection.sock.getpeername()  # raises if disconnected
             return _ableton_connection
         except Exception as e:
-            logger.warning(f"Existing connection is no longer valid: {str(e)}")
+            logger.warning("Existing connection is no longer valid: %s", e)
             try:
                 _ableton_connection.disconnect()
             except Exception:
@@ -1044,7 +1075,7 @@ def get_ableton_connection():
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
-                logger.info(f"Connecting to Ableton (attempt {attempt}/{max_attempts})...")
+                logger.info("Connecting to Ableton (attempt %d/%d)...", attempt, max_attempts)
                 _ableton_connection = AbletonConnection(host="localhost", port=9877)
                 if _ableton_connection.connect():
                     logger.info("Created new persistent connection to Ableton")
@@ -1056,14 +1087,14 @@ def get_ableton_connection():
                         logger.info("Connection validated successfully")
                         return _ableton_connection
                     except Exception as e:
-                        logger.error(f"Connection validation failed: {str(e)}")
+                        logger.error("Connection validation failed: %s", e)
                         _ableton_connection.disconnect()
                         _ableton_connection = None
                         # Continue to next attempt
                 else:
                     _ableton_connection = None
             except Exception as e:
-                logger.error(f"Connection attempt {attempt} failed: {str(e)}")
+                logger.error("Connection attempt %d failed: %s", attempt, e)
                 if _ableton_connection:
                     _ableton_connection.disconnect()
                     _ableton_connection = None
@@ -2308,27 +2339,20 @@ def get_browser_tree(ctx: Context, category_type: str = "all") -> str:
         # Try to serve from cache first (richer data with URIs)
         cache = _get_browser_cache()
         if cache:
-            category_map = {
-                "instruments": "Instruments",
-                "sounds": "Sounds",
-                "drums": "Drums",
-                "audio_effects": "Audio Effects",
-                "midi_effects": "MIDI Effects",
-            }
-
             # Filter categories
             if category_type == "all":
-                show_categories = list(category_map.values())
+                show_categories = list(_CATEGORY_DISPLAY.values())
             else:
-                show_categories = [category_map.get(category_type, category_type)]
+                show_categories = [_CATEGORY_DISPLAY.get(category_type, category_type)]
 
             formatted_output = f"Browser tree for '{category_type}':\n\n"
             for cat_display in show_categories:
+                # Use category index for O(1) lookup instead of scanning all items
+                cat_items = _browser_cache_by_category.get(cat_display, [])
                 # Top-level items have paths like "sounds/Operator" (2 segments)
                 top_items = [
-                    item for item in cache
-                    if item.get("category") == cat_display
-                    and item.get("path", "").count("/") == 1
+                    item for item in cat_items
+                    if item.get("path", "").count("/") == 1
                 ]
                 if not top_items:
                     continue
@@ -2986,22 +3010,12 @@ def search_browser(ctx: Context, query: str, category: str = "all") -> str:
 
         query_lower = query.lower()
 
-        # Map category filter keys to display names used in cache entries
-        category_display = {
-            "instruments": "Instruments",
-            "sounds": "Sounds",
-            "drums": "Drums",
-            "audio_effects": "Audio Effects",
-            "midi_effects": "MIDI Effects",
-        }
-        filter_display = category_display.get(category) if category != "all" else None
+        # Use category index for filtered search (smaller list to scan)
+        filter_display = _CATEGORY_DISPLAY.get(category) if category != "all" else None
+        search_list = _browser_cache_by_category.get(filter_display, cache) if filter_display else cache
 
         results = []
-        for item in cache:
-            # Filter by category if specified
-            if filter_display and item.get("category") != filter_display:
-                continue
-
+        for item in search_list:
             # Substring match using pre-lowercased search_name
             if query_lower in item.get("search_name", item.get("name", "").lower()):
                 results.append(item)
@@ -3043,11 +3057,11 @@ def refresh_browser_cache(ctx: Context) -> str:
         if success:
             with _browser_cache_lock:
                 count = len(_browser_cache_flat)
-                cats = len(_browser_cache)
+                cats = len(_browser_cache_by_category)
             return f"Browser cache refreshed: {count} items across {cats} categories"
         return "Failed to refresh browser cache. Make sure Ableton is running."
     except Exception as e:
-        logger.error(f"Error refreshing browser cache: {str(e)}")
+        logger.error("Error refreshing browser cache: %s", e)
         return "Error refreshing browser cache. Please check the server logs for details."
 
 
