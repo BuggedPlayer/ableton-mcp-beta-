@@ -312,7 +312,7 @@ A JavaScript file (v2.0.0) running inside a Max for Live `[js]` object. It provi
 |---|---|---|
 | `get_wavetable_info` | `track_index: int, device_index: int` | Get Wavetable device state: oscillator wavetables, modulation matrix, unison, filter routing |
 | `set_wavetable_modulation` | `track_index: int, device_index: int, target_index: int, source_index: int, amount: float` | Set modulation amount in Wavetable's mod matrix. Sources: 0=Env2, 1=Env3, 2=LFO1, 3=LFO2 |
-| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable properties: oscillator wavetable category/index, effect modes (reliable). Filter routing, unison, voices are attempted but may not take effect via M4L |
+| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable oscillator wavetable category/index and effect modes. Voice/unison/filter properties are read-only (see Limitations) |
 
 ### Snapshot & Versioning (v1.6.0)
 
@@ -398,7 +398,7 @@ The MCP server sends native OSC messages to port **9878** (M4L `udpreceive`). Th
 | `/set_hidden_param` | `track_index, device_index, param_index, value, request_id` | Set a parameter by LOM index |
 | `/batch_set_hidden_params` | `track_index, device_index, params_b64, request_id` | Set multiple params at once (chunked). `params_b64` is URL-safe base64-encoded JSON: `[{index, value}, ...]`. Note: v1.8.2+ server uses sequential `/set_hidden_param` calls instead for reliability. |
 | `/check_dashboard` | `request_id` | Returns the dashboard URL and bridge version |
-| `/discover_chains` | `track_index, device_index, request_id` | Discover rack chains, nested devices, and drum pads (v2.0.0) |
+| `/discover_chains` | `track_index, device_index, [extra_path], request_id` | Discover rack chains, nested devices, and drum pads. Optional `extra_path` for nested racks (v2.0.0) |
 | `/get_chain_device_params` | `track_index, device_index, chain_index, chain_device_index, request_id` | Get all params for a device inside a chain (v2.0.0) |
 | `/set_chain_device_param` | `track_index, device_index, chain_index, chain_device_index, param_index, value, request_id` | Set a param on a nested device (v2.0.0) |
 | `/get_simpler_info` | `track_index, device_index, request_id` | Get Simpler device and sample info (v2.0.0) |
@@ -433,6 +433,8 @@ The M4L bridge (`m4l_bridge.js`) is a JavaScript file running in a Max `[js]` ob
    ```
 
 3. **Parameter Discovery**: Iterates all parameters on a device via `getcount("parameters")`, reading each parameter's `name`, `value`, `min`, `max`, `is_quantized`, `default_value`, and `value_items`.
+
+3b. **LiveAPI Cursor Reuse**: Chain/drum pad discovery uses `LiveAPI.goto()` to navigate a reusable cursor object instead of creating `new LiveAPI()` per iteration. This keeps the total LiveAPI object count at 3 (vs ~193 for a 16-pad drum rack), preventing Max's `[js]` engine from running out of object handles.
 
 4. **Parameter Setting**: Sets any parameter by its LOM index, with value clamping:
    ```javascript
@@ -474,7 +476,14 @@ Navigate inside Instrument Racks, Audio Effect Racks, and Drum Racks. Discover c
 Read and control Simpler's loaded sample properties: start/end markers, warp mode, gain, slicing sensitivity. Manage slices programmatically (insert, remove, clear, reset). Access warp-mode-specific properties (beats granulation, texture flux, complex pro formants, etc.).
 
 ### Wavetable Modulation Matrix (NEW — requires M4L)
-Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections, filter routing, unison mode/voices, and polyphony settings.
+Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections and effect modes via M4L. Voice/unison/filter properties (unison mode, unison voices, filter routing, mono/poly, poly voices) can be read via `get_wavetable_info` but are read-only — not exposed as DeviceParameters (see Limitations).
+
+### Full Automation Support (v1.8.0+)
+**Clip automation**: Create, read, clear, and discover automation on any automatable parameter (Volume, Pan, Sends, device parameters) on both MIDI and audio clips. Tools: `create_clip_automation`, `get_clip_automation`, `clear_clip_automation`, `list_clip_automated_parameters`.
+**Arrangement automation**: Create and clear track-level automation in arrangement view via `create_track_automation` and `clear_track_automation`. Supports Volume, Pan, Sends, and all device parameters.
+
+### Advanced MIDI Note Editing (v1.8.0+, Live 11+)
+Extended note properties: **probability** (0.0–1.0 trigger chance), **velocity_deviation** (random velocity range), and **release_velocity**. Use `add_notes_extended` and `get_notes_extended`. Selectively remove notes by time/pitch range with `remove_notes_range`. Falls back gracefully to legacy APIs on Live 10.
 
 ### Intelligent Preset Generator
 Discover all device parameters, then Claude intelligently sets values based on text descriptions like "bright bass", "warm pad", or "aggressive lead". Auto-snapshots current state for easy revert. **v2.0.0**: Now uses TCP (no M4L needed).
@@ -664,12 +673,10 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 
 ## Limitations
 
-- VST/AU plugins cannot be loaded directly (Ableton API limitation) — save as Instrument Rack first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`
-- Complex arrangements should be broken into smaller steps
-- Clip automation works best with MIDI clips and basic device parameters
-- Arrangement view is limited: clips can be placed via `duplicate_clip_to_arrangement` but not edited directly in arrangement. Arrangement automation is not supported by Ableton's API
-- Extended note properties (probability, velocity_deviation, release_velocity) require Live 11+
-- Always save your work before extensive experimentation
+- **VST/AU plugins** cannot be loaded directly (Ableton API limitation) — save as Instrument Rack preset first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`. Built-in Ableton devices can be loaded by name (e.g. `"Wavetable"`, `"Reverb"`) — auto-resolved via browser cache
+- **Arrangement clips** are read-only after placement — edit clips in session view, then place on the timeline with `duplicate_clip_to_arrangement`. Use `get_arrangement_clips` to read, and `delete_time` / `duplicate_time` / `insert_silence` for structural edits
+- **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but are **read-only** — not exposed as DeviceParameters (verified against full 93-parameter list) and `LiveAPI.set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably. Change voice/unison/filter settings manually in Ableton's GUI
+- **Large sessions**: For best results, break arrangement tasks into smaller tool calls (e.g. place clips first, then add automation, then adjust mixing)
 
 ## Troubleshooting
 
@@ -679,6 +686,9 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 - **Remote Script not updating**: Delete `__pycache__/__init__.cpython-*.pyc` in the Ableton MIDI Remote Scripts folder, then reload the control surface
 - **Multiple server instances**: The server now has a singleton guard (port 9881) — a second instance will exit automatically. If the port is stuck, set `ABLETON_MCP_LOCK_PORT` env var
 - **Dashboard not loading**: Make sure Claude Desktop is running the latest wheel (check `claude_desktop_config.json`). Restart Claude Desktop after rebuilding. If port 9880 is in use, set `ABLETON_MCP_DASHBOARD_PORT` env var
+- **M4L bridge not responding**: Reload the `[js]` object in the M4L device (click the `[js m4l_bridge.js]` box in the Max patch). If that fails, remove and re-add the M4L device to a track
+- **Batch parameter operations slow**: Large batch operations (>10 parameters) use chunking with 50ms delays for stability — expect ~150ms per parameter. This prevents Ableton crashes during heavy parameter writes
+- **Save your work**: Always save your Live Set before extensive AI-driven experimentation — parameter changes and device loading cannot be undone via Ctrl+Z in all cases
 
 ## Disclaimer
 

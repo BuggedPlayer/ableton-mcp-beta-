@@ -127,7 +127,7 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 |---|---|
 | `get_wavetable_info(track, device)` | Get oscillator wavetables, mod matrix, unison, filter routing |
 | `set_wavetable_modulation(track, device, target, source, amount)` | Set modulation amount (Env2/Env3/LFO1/LFO2 → target) |
-| `set_wavetable_properties(track, device, ...)` | Set wavetable selection, effect modes (reliable). Unison/filter/voice properties are attempted but may not take effect (M4L limitation) |
+| `set_wavetable_properties(track, device, ...)` | Set wavetable selection, effect modes (via M4L). Unison/filter/voice properties are read-only (Ableton API limitation) |
 
 ## Troubleshooting
 
@@ -179,4 +179,5 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 - **v2.0.0**: `discover_rack_chains` accepts optional `chain_path` (e.g. `"chains 0 devices 0"`) to navigate into nested racks
 - **v2.0.0**: Simpler sample access uses path `live_set tracks T devices D sample` for LOM Sample object
 - **v2.0.0**: Wavetable modulation uses `deviceApi.call("get_modulation_value", target, source)` and `set_modulation_value`
-- **v2.0.0**: Wavetable `set()` works for oscillator properties (category, index, effect_mode) but silently fails for voice/unison/filter properties (`unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices`) — these can be read via `get()` but not written. This is a Max for Live `LiveAPI.set()` platform limitation.
+- **v2.0.0**: Wavetable `LiveAPI.set()` works for oscillator properties (category, index, effect_mode) but silently fails for voice/unison/filter properties (`unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices`). These properties are NOT exposed as DeviceParameters either (verified against full 93-parameter list), so TCP `set_device_parameter` cannot write them. This is a confirmed hard Ableton API limitation — these properties are read-only via all available APIs.
+- **v2.0.0**: `setHiddenParam()` uses fire-and-forget `set()` — no post-set `get("value")` readback, which can crash Ableton.

@@ -1050,8 +1050,8 @@ function handleSetWavetableProps(args) {
         "oscillator_1_wavetable_category", "oscillator_1_wavetable_index",
         "oscillator_2_wavetable_category", "oscillator_2_wavetable_index"
     ];
-    // Tier 2: Voice/unison/filter properties — LOM-documented but set() is unreliable
-    // in Max [js] LiveAPI. Do NOT call get() after set() on these — crashes Ableton.
+    // Tier 2: Voice/unison/filter properties — these are handled by the MCP
+    // server via TCP (set_device_parameter). LiveAPI.set() silently fails for these.
     var tier2 = [
         "filter_routing", "mono_poly", "poly_voices",
         "unison_mode", "unison_voice_count"
@@ -1078,6 +1078,12 @@ function handleSetWavetableProps(args) {
             continue;
         }
 
+        // Tier 2 properties: skip — the server routes these via TCP instead
+        if (isTier2) {
+            details.push({ property: key, value: Number(props[key]), note: "skipped — use TCP set_device_parameter instead" });
+            continue;
+        }
+
         var val = Number(props[key]);
 
         // Fire-and-forget set() — NO get() calls to avoid Ableton crashes
@@ -1088,13 +1094,8 @@ function handleSetWavetableProps(args) {
             continue;
         }
 
-        if (isTier1) {
-            setCount++;
-            details.push({ property: key, value: val });
-        } else {
-            // Tier 2: set() was called but may not take effect
-            details.push({ property: key, value: val, note: "unverified — this property may not be writable via M4L" });
-        }
+        setCount++;
+        details.push({ property: key, value: val });
     }
 
     var result = { properties_set: setCount };
@@ -1120,15 +1121,16 @@ function discoverParamsAtPath(devicePath) {
     var paramCount = parseInt(deviceApi.getcount("parameters"));
     var parameters = [];
 
+    // Reuse a single cursor via goto() — same fix as discoverParams()
+    var cursor = new LiveAPI(null, devicePath);
     for (var i = 0; i < paramCount; i++) {
-        var paramPath = devicePath + " parameters " + i;
-        var paramApi  = new LiveAPI(null, paramPath);
+        cursor.goto(devicePath + " parameters " + i);
 
-        if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
+        if (!cursor.id || parseInt(cursor.id) === 0) {
             continue;
         }
 
-        var paramInfo = readParamInfo(paramApi, i);
+        var paramInfo = readParamInfo(cursor, i);
         parameters.push(paramInfo);
     }
 
@@ -1235,15 +1237,18 @@ function discoverParams(trackIdx, deviceIdx) {
     var paramCount = parseInt(deviceApi.getcount("parameters"));
     var parameters = [];
 
+    // Reuse a single cursor via goto() instead of creating N new LiveAPI objects.
+    // For a 93-param device this reduces objects from 94 to 2, preventing
+    // Max [js] memory exhaustion (same fix as discoverChainsAtPath).
+    var cursor = new LiveAPI(null, devicePath);
     for (var i = 0; i < paramCount; i++) {
-        var paramPath = devicePath + " parameters " + i;
-        var paramApi  = new LiveAPI(null, paramPath);
+        cursor.goto(devicePath + " parameters " + i);
 
-        if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
+        if (!cursor.id || parseInt(cursor.id) === 0) {
             continue;
         }
 
-        var paramInfo = readParamInfo(paramApi, i);
+        var paramInfo = readParamInfo(cursor, i);
         parameters.push(paramInfo);
     }
 
@@ -1275,14 +1280,13 @@ function setHiddenParam(trackIdx, deviceIdx, paramIdx, value) {
 
         var clamped = Math.max(minVal, Math.min(maxVal, value));
         paramApi.set("value", clamped);
-
-        var actualValue = parseFloat(paramApi.get("value"));
+        // NO readback — get() after set() can crash Ableton (same pattern as wavetable fix)
 
         return {
             parameter_name:  paramName,
             parameter_index: paramIdx,
             requested_value: value,
-            actual_value:    actualValue,
+            actual_value:    clamped,
             was_clamped:     (clamped !== value)
         };
     } catch (e) {

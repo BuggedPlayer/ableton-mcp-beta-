@@ -3308,8 +3308,8 @@ def create_clip_automation(ctx: Context, track_index: int, clip_index: int,
     - parameter_name: Name of the parameter to automate (e.g., "Device On", "Volume")
     - automation_points: List of {time: float, value: float} dictionaries
 
-    Note: Limited support - works best with MIDI clips and basic device parameters.
-    Arrangement automation is not supported via the API.
+    Supports mixer parameters (Volume, Pan, Sends) and all device parameters
+    on both MIDI and audio clips. For arrangement-level automation, use create_track_automation.
     """
     try:
         _validate_index(track_index, "track_index")
@@ -5403,11 +5403,11 @@ def set_wavetable_properties(
     unison_mode: int = None,
     unison_voice_count: int = None
 ) -> str:
-    """Set properties on a Wavetable device (oscillator, filter, unison, voice settings).
+    """Set properties on a Wavetable device (oscillator settings).
 
     Use get_wavetable_info() to see available wavetable categories and current values.
 
-    RELIABLE properties (oscillator settings):
+    Settable properties (oscillator settings via M4L bridge):
     - oscillator_1_wavetable_category: Category index for Osc 1
     - oscillator_1_wavetable_index: Wavetable index within category for Osc 1
     - oscillator_2_wavetable_category: Category index for Osc 2
@@ -5415,12 +5415,10 @@ def set_wavetable_properties(
     - oscillator_1_effect_mode: Effect mode for Osc 1
     - oscillator_2_effect_mode: Effect mode for Osc 2
 
-    LIMITED properties (may not take effect via M4L — use get_wavetable_info to read them):
-    - filter_routing: 0=Serial, 1=Parallel, 2=Split
-    - mono_poly: 0=Mono, 1=Poly
-    - poly_voices: Number of polyphony voices
-    - unison_mode: 0=None, 1=Classic, 2=Shimmer, 3=Noise, 4=Phase Sync, 5=Position Spread
-    - unison_voice_count: Number of unison voices
+    READ-ONLY properties (cannot be set via any API — use Ableton's GUI):
+    - filter_routing, mono_poly, poly_voices, unison_mode, unison_voice_count
+    These are readable via get_wavetable_info() but not exposed as DeviceParameters
+    and LiveAPI.set() silently fails. This is a confirmed Ableton API limitation.
 
     Parameters:
     - track_index: Track containing the Wavetable
@@ -5432,8 +5430,19 @@ def set_wavetable_properties(
         _validate_index(track_index, "track_index")
         _validate_index(device_index, "device_index")
 
-        props = {}
-        local_vars = {
+        # Settable properties (oscillator settings — work via M4L LiveAPI.set())
+        settable_keys = {
+            "oscillator_1_wavetable_category", "oscillator_1_wavetable_index",
+            "oscillator_2_wavetable_category", "oscillator_2_wavetable_index",
+            "oscillator_1_effect_mode", "oscillator_2_effect_mode",
+        }
+        # Read-only properties — not exposed as DeviceParameters, LiveAPI.set() fails
+        readonly_keys = {
+            "filter_routing", "mono_poly", "poly_voices",
+            "unison_mode", "unison_voice_count",
+        }
+
+        all_vars = {
             "oscillator_1_wavetable_category": oscillator_1_wavetable_category,
             "oscillator_1_wavetable_index": oscillator_1_wavetable_index,
             "oscillator_2_wavetable_category": oscillator_2_wavetable_category,
@@ -5446,44 +5455,61 @@ def set_wavetable_properties(
             "unison_mode": unison_mode,
             "unison_voice_count": unison_voice_count,
         }
-        for key, val in local_vars.items():
-            if val is not None:
-                props[key] = val
 
-        if not props:
+        props = {}
+        readonly_requested = []
+        for key, val in all_vars.items():
+            if val is None:
+                continue
+            if key in settable_keys:
+                props[key] = val
+            elif key in readonly_keys:
+                readonly_requested.append(key)
+
+        if not props and not readonly_requested:
             return "No properties specified to set."
 
-        m4l = get_m4l_connection()
-        result = m4l.send_command("set_wavetable_props", {
-            "track_index": track_index,
-            "device_index": device_index,
-            "properties": props,
-        })
+        output_parts = []
 
-        data = result.get("result", result)
+        # Set oscillator properties via M4L
+        if props:
+            m4l = get_m4l_connection()
+            result = m4l.send_command("set_wavetable_props", {
+                "track_index": track_index,
+                "device_index": device_index,
+                "properties": props,
+            })
 
-        if data.get("error"):
-            return f"Error: {data['error']}"
+            data = result.get("result", result)
 
-        set_count = data.get('properties_set', 0)
-        details = data.get('details', [])
-        errors = data.get('errors', [])
+            if data.get("error"):
+                return f"Error: {data['error']}"
 
-        output = f"Set {set_count} Wavetable properties."
-        if details:
-            output += "\nDetails:\n"
-            for d in details:
-                note = d.get('note', '')
-                if note:
-                    output += f"  {d['property']} = {d.get('value', '?')} ({note})\n"
-                else:
-                    output += f"  {d['property']} = {d.get('value', '?')}\n"
-        if errors:
-            output += "\nErrors:\n"
-            for err in errors:
-                output += f"  {err['property']}: {err['error']}\n"
+            set_count = data.get('properties_set', 0)
+            details = data.get('details', [])
+            errors = data.get('errors', [])
 
-        return output
+            output_parts.append(f"Set {set_count} Wavetable properties.")
+            if details:
+                output_parts.append("Details:")
+                for d in details:
+                    output_parts.append(f"  {d['property']} = {d.get('value', '?')}")
+            if errors:
+                output_parts.append("Errors:")
+                for err in errors:
+                    output_parts.append(f"  {err['property']}: {err['error']}")
+
+        # Report read-only properties
+        if readonly_requested:
+            names = ", ".join(readonly_requested)
+            output_parts.append(
+                f"\nCannot set: {names} — these Wavetable properties are read-only "
+                f"(not exposed as DeviceParameters, LiveAPI.set() silently fails). "
+                f"Use get_wavetable_info() to read their current values. "
+                f"Change them manually in Ableton's GUI."
+            )
+
+        return "\n".join(output_parts)
     except ConnectionError as e:
         return f"M4L bridge not available: {e}"
     except Exception as e:

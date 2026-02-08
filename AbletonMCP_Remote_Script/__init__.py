@@ -267,7 +267,11 @@ class AbletonMCP(ControlSurface):
                         response = self._process_command(command)
 
                         response_str = json.dumps(response) + '\n'
-                        client.sendall(response_str.encode('utf-8'))
+                        try:
+                            client.sendall(response_str.encode('utf-8'))
+                        except (OSError, socket.error):
+                            self.log_message("Client disconnected during response send")
+                            break
 
                     # 1MB safety limit
                     if len(buffer) > 1048576:
