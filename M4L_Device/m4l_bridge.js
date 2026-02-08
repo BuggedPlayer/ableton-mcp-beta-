@@ -1219,81 +1219,79 @@ function sendError(message, requestId) {
 }
 
 // ---------------------------------------------------------------------------
-// Chunked response sending  (Revision 3b — URL-safe base64)
+// Chunked response sending  (Revision 4)
 //
 // Max's [js] outlet() has a practical symbol size limit of ~8KB.  Responses
-// larger than that crash Ableton.  Additionally, standard base64 contains
-// '+' and '/' characters that confuse Max's OSC routing (/ is a path
-// separator in OSC addresses).
+// larger than that crash Ableton.  Standard base64 '+' and '/' characters
+// also confuse Max's OSC routing.
 //
-// Rev 3 (splitting raw JSON + escaping) failed because _jsonEscape()
-// inflates pieces (doubling every " character) — final base64 exceeded 8KB.
+// Previous revisions failed because:
+//   Rev 1-2: Non-base64 prefixes crash OSC layer
+//   Rev 3:   _jsonEscape() inflates pieces (doubling every " char)
+//   Rev 3b:  O(n^2) char-by-char _toUrlSafeBase64() on 16KB string locks
+//            up the JS engine; full 16KB intermediate string in memory
 //
-// Rev 3b solution:
-//   1. Encode full JSON → standard base64
-//   2. Convert to URL-safe base64 (+ → -, / → _, strip =)
-//   3. If small (≤ 5500) → send as-is
-//   4. If large → split URL-safe base64 into 4000-char pieces
-//   5. Wrap each piece: {"_c":idx,"_t":total,"_d":"<piece>"}
-//      (piece is pure [A-Za-z0-9_-] — zero escaping overhead!)
-//   6. Base64-encode each envelope → URL-safe → outlet()
+// Rev 4 solution — chunk JSON first, encode pieces independently:
+//   1. If small (≤ 1500 chars JSON) → encode + URL-safe + outlet directly
+//   2. If large → split raw JSON into 2000-char pieces
+//   3. Each piece: base64 → URL-safe → wrap in envelope → base64 → URL-safe
+//   4. ALL chunks deferred via Task.schedule() (not synchronous)
+//   5. Each outlet() sends ~3.6KB — well under 8KB limit
 //
-// Each outlet() call sends pure [A-Za-z0-9_-] — no OSC-special chars.
-// Python server detects chunks by checking for "_c"/"_t" keys.
+// Key safety properties:
+//   - Never creates the full base64 string in memory
+//   - .replace() for URL-safe conversion is O(n) native, not O(n^2) loop
+//   - Each operation works on ≤ ~3.6KB strings — no memory pressure
+//   - First chunk is deferred (not synchronous from discovery callback)
 // ---------------------------------------------------------------------------
-var RESPONSE_PIECE_SIZE  = 4000;  // chars of URL-safe base64 per chunk
+var RESPONSE_PIECE_SIZE  = 2000;  // chars of RAW JSON per chunk (conservative)
 var RESPONSE_CHUNK_DELAY = 50;    // ms between outlet() calls
 var _responseSendState   = null;  // global state for deferred chunk sending
 
-function _toUrlSafeBase64(b64) {
-    // Standard base64 → URL-safe: + → -, / → _, strip = padding
-    var result = "";
-    for (var i = 0; i < b64.length; i++) {
-        var c = b64.charAt(i);
-        if (c === "+") result += "-";
-        else if (c === "/") result += "_";
-        else if (c === "=") { /* skip padding */ }
-        else result += c;
-    }
-    return result;
+function _toUrlSafe(b64) {
+    // O(n) native .replace() — NOT char-by-char concatenation
+    return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
 function sendResponse(jsonStr) {
-    var encoded = _toUrlSafeBase64(_base64encode(jsonStr));
-
-    if (encoded.length <= 5500) {
-        // Small response — send as single packet (backward compatible)
-        outlet(0, encoded);
+    // Small response — encode + send directly (backward compatible)
+    if (jsonStr.length <= 1500) {
+        outlet(0, _toUrlSafe(_base64encode(jsonStr)));
         return;
     }
 
-    // Large response — split URL-safe base64 into pieces
-    var totalChunks = Math.ceil(encoded.length / RESPONSE_PIECE_SIZE);
-    post("sendResponse: splitting " + encoded.length + " url-safe-b64 chars into " + totalChunks + " chunks\n");
+    // Large response — store raw JSON, defer ALL chunk sending via Task
+    var totalChunks = Math.ceil(jsonStr.length / RESPONSE_PIECE_SIZE);
+    post("sendResponse: " + jsonStr.length + " chars JSON -> " + totalChunks + " chunks\n");
 
     _responseSendState = {
-        encoded:     encoded,
-        pieceSize:   RESPONSE_PIECE_SIZE,
+        jsonStr:     jsonStr,
         totalChunks: totalChunks,
         idx:         0
     };
 
-    // Send first chunk immediately, schedule rest via Task
-    _sendNextResponsePiece();
+    // DEFER first chunk — don't send synchronously from discovery callback
+    var t = new Task(_sendNextResponsePiece);
+    t.schedule(RESPONSE_CHUNK_DELAY);
 }
 
 function _sendNextResponsePiece() {
     if (!_responseSendState) return;
     var s = _responseSendState;
 
-    var start = s.idx * s.pieceSize;
-    var end   = Math.min(start + s.pieceSize, s.encoded.length);
-    var piece = s.encoded.substring(start, end);
+    // Extract this piece of raw JSON
+    var start = s.idx * RESPONSE_PIECE_SIZE;
+    var end   = Math.min(start + RESPONSE_PIECE_SIZE, s.jsonStr.length);
+    var piece = s.jsonStr.substring(start, end);
 
-    // piece is pure [A-Za-z0-9_-] — no escaping needed!
-    var chunkJson = '{"_c":' + s.idx + ',"_t":' + s.totalChunks + ',"_d":"' + piece + '"}';
-    var chunkB64  = _toUrlSafeBase64(_base64encode(chunkJson));
-    outlet(0, chunkB64);
+    // Encode piece independently → URL-safe base64 (O(n) via .replace())
+    var pieceB64 = _toUrlSafe(_base64encode(piece));
+
+    // Wrap in chunk envelope, encode envelope, send
+    // pieceB64 is pure [A-Za-z0-9_-] — no escaping needed in the JSON string
+    var envelope = '{"_c":' + s.idx + ',"_t":' + s.totalChunks + ',"_d":"' + pieceB64 + '"}';
+    var envelopeB64 = _toUrlSafe(_base64encode(envelope));
+    outlet(0, envelopeB64);
 
     s.idx++;
     if (s.idx < s.totalChunks) {

@@ -513,15 +513,15 @@ class M4LConnection:
     def _reassemble_chunked_response(self, first_chunk: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         """Reassemble a multi-part chunked response from the M4L bridge.
 
-        Rev 3b protocol — chunk metadata is embedded inside the JSON:
-          {"_c": chunk_index, "_t": total_chunks, "_d": "<url-safe base64 piece>"}
-        Each chunk is URL-safe base64 encoded independently.
-        The _d values are pieces of the full URL-safe base64 of the original JSON.
+        Rev 4 protocol — chunk metadata is embedded inside the JSON:
+          {"_c": chunk_index, "_t": total_chunks, "_d": "<url-safe b64 of json piece>"}
+        Each _d is URL-safe base64 of a RAW JSON piece (not a piece of full b64).
+        Decode each _d independently, concatenate decoded strings, JSON parse.
         """
         total_chunks = int(first_chunk["_t"])
         chunks: Dict[int, str] = {}
         chunks[int(first_chunk["_c"])] = first_chunk["_d"]
-        logger.debug("M4L chunked response (Rev3b): chunk %d/%d", int(first_chunk["_c"]) + 1, total_chunks)
+        logger.debug("M4L chunked response (Rev4): chunk %d/%d", int(first_chunk["_c"]) + 1, total_chunks)
 
         # Receive remaining chunks
         while len(chunks) < total_chunks:
@@ -533,7 +533,7 @@ class M4LConnection:
                 if isinstance(chunk, dict) and "_c" in chunk and "_t" in chunk:
                     idx = int(chunk["_c"])
                     chunks[idx] = chunk["_d"]
-                    logger.debug("M4L chunked response (Rev3b): chunk %d/%d", idx + 1, total_chunks)
+                    logger.debug("M4L chunked response (Rev4): chunk %d/%d", idx + 1, total_chunks)
                 else:
                     logger.warning("Expected chunk packet, got non-chunk data; ignoring")
                     continue
@@ -542,11 +542,13 @@ class M4LConnection:
                     f"Timeout waiting for M4L chunked response: received {len(chunks)}/{total_chunks} chunks"
                 )
 
-        # Reassemble: concatenate _d values → full URL-safe base64 → decode → JSON
-        full_urlsafe_b64 = "".join(chunks[i] for i in range(total_chunks))
-        logger.debug("M4L chunked response reassembled: %d chars URL-safe base64", len(full_urlsafe_b64))
+        # Reassemble: decode each _d from URL-safe base64, concatenate, JSON parse
+        pieces = []
+        for i in range(total_chunks):
+            pieces.append(self._from_urlsafe_b64(chunks[i]))
+        full_json_str = "".join(pieces)
+        logger.debug("M4L chunked response reassembled: %d chars JSON", len(full_json_str))
 
-        full_json_str = M4LConnection._from_urlsafe_b64(full_urlsafe_b64)
         return json.loads(full_json_str)
 
     def ping(self) -> bool:
