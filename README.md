@@ -461,6 +461,13 @@ Read and control Simpler's loaded sample properties: start/end markers, warp mod
 ### Wavetable Modulation Matrix (NEW — requires M4L)
 Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections and effect modes. Voice/unison/filter properties can be read but not written due to a Max for Live LiveAPI limitation (see Known Limitations).
 
+### Full Automation Support (v1.8.0+)
+**Clip automation**: Create, read, clear, and discover automation on any automatable parameter (Volume, Pan, Sends, device parameters) on both MIDI and audio clips. Tools: `create_clip_automation`, `get_clip_automation`, `clear_clip_automation`, `list_clip_automated_parameters`.
+**Arrangement automation**: Create and clear track-level automation in arrangement view via `create_track_automation` and `clear_track_automation`. Supports Volume, Pan, Sends, and all device parameters.
+
+### Advanced MIDI Note Editing (v1.8.0+, Live 11+)
+Extended note properties: **probability** (0.0–1.0 trigger chance), **velocity_deviation** (random velocity range), and **release_velocity**. Use `add_notes_extended` and `get_notes_extended`. Selectively remove notes by time/pitch range with `remove_notes_range`. Falls back gracefully to legacy APIs on Live 10.
+
 ### Intelligent Preset Generator
 Discover all device parameters, then Claude intelligently sets values based on text descriptions like "bright bass", "warm pad", or "aggressive lead". Auto-snapshots current state for easy revert. **v2.0.0**: Now uses TCP (no M4L needed).
 
@@ -651,9 +658,6 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 
 - **VST/AU plugins** cannot be loaded directly (Ableton API limitation) — save as Instrument Rack preset first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`. Built-in Ableton devices can be loaded by name (e.g. `"Wavetable"`, `"Reverb"`) — auto-resolved via browser cache
 - **Arrangement clips** are read-only after placement — edit clips in session view, then place on the timeline with `duplicate_clip_to_arrangement`. Use `get_arrangement_clips` to read, and `delete_time` / `duplicate_time` / `insert_silence` for structural edits
-- **Arrangement automation** is supported via `create_track_automation` and `clear_track_automation` for track-level parameter automation (Volume, Pan, Sends, device parameters)
-- **Clip automation** supports mixer parameters (Volume, Pan, Sends) and all device parameters on both MIDI and audio clips. Use `create_clip_automation`, `get_clip_automation`, `clear_clip_automation`, and `list_clip_automated_parameters`
-- **Extended note properties** (probability, velocity_deviation, release_velocity) require Live 11+. Basic note operations work on Live 10+
 - **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but **cannot be written** via `set_wavetable_properties`. This is a Max for Live `LiveAPI.set()` limitation — these properties are documented in the LOM but `set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably
 - **Large sessions**: For best results, break arrangement tasks into smaller tool calls (e.g. place clips first, then add automation, then adjust mixing)
 

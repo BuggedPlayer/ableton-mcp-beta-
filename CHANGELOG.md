@@ -51,6 +51,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 - **Fixed `grid_to_clip` silent failures**: `except Exception: pass` replaced with proper error returns
 - **Fixed `generate_preset` device targeting**: improved docstring guidance to target synth, not effects
 - **Reduced bruteforce resolver logging**: removed per-iteration logging from `devices.py` — only MATCH and ERROR logged now
+- **Improved documentation**: Moved automation and extended note features from Limitations to Features — these are capabilities, not limitations. Fixed `create_clip_automation` docstring that incorrectly said "arrangement automation is not supported"
 - Total tools: 132 -> **138** (+9 new, -3 removed)
 
 ---
