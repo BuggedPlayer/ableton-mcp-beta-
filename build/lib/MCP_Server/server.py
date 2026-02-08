@@ -393,12 +393,16 @@ class M4LConnection:
         request_id = str(uuid.uuid4())[:8]
         osc = self._build_osc_packet(command_type, params, request_id)
 
-        # Batch operations use chunked processing in the M4L device with
-        # delays between chunks, so they need a longer timeout.
+        # Chunked operations (batch set, param discovery) use deferred
+        # callbacks in the M4L device and need longer timeouts.
         if command_type == "batch_set_hidden_params":
             param_count = len(params.get("parameters", []))
             # ~150ms per param (chunk delay + LOM overhead), minimum 10s
             timeout = max(10.0, param_count * 0.15)
+        elif command_type in ("discover_params", "get_hidden_params", "get_chain_device_params"):
+            # Chunked discovery: ~50ms per 4-param chunk + LOM overhead
+            # 93 params → ~24 chunks → ~1.2s + overhead. Use 10s for safety.
+            timeout = 10.0
         else:
             timeout = 5.0
 
@@ -430,7 +434,13 @@ class M4LConnection:
 
             try:
                 data, _addr = self.recv_sock.recvfrom(65535)
-                result = self._parse_m4l_response(data)
+                osc_str = self._extract_osc_address(data)
+                result = self._decode_m4l_payload(osc_str)
+
+                # Check for chunked response (Rev 3: chunk metadata inside JSON)
+                if isinstance(result, dict) and "_c" in result and "_t" in result:
+                    result = self._reassemble_chunked_response(result, timeout)
+
                 # Verify request_id matches (warn on mismatch but don't fail)
                 resp_id = result.get("id", "")
                 if resp_id and resp_id != request_id:
@@ -445,47 +455,80 @@ class M4LConnection:
                 raise Exception("Timeout waiting for M4L bridge response. Is the M4L device loaded?")
 
     @staticmethod
-    def _parse_m4l_response(data: bytes) -> Dict[str, Any]:
-        """Parse the response from the M4L bridge.
+    def _extract_osc_address(data: bytes) -> str:
+        """Extract the OSC address string from a raw UDP packet.
 
-        Max's udpsend wraps the base64 string as an OSC message:
-          [base64_string\\0...padding][,\\0\\0\\0]
-        The OSC address (first null-terminated string) contains our
-        base64-encoded JSON response.
+        Max's udpsend wraps the outlet symbol as an OSC message:
+          [symbol\\0...padding][,\\0\\0\\0]
         """
-        # Extract the OSC address = first null-terminated string in the packet
         null_pos = data.find(b"\x00")
         if null_pos > 0:
-            osc_address = data[:null_pos].decode("utf-8", errors="replace").strip()
-        else:
-            osc_address = data.decode("utf-8", errors="replace").strip()
+            return data[:null_pos].decode("utf-8", errors="replace").strip()
+        return data.decode("utf-8", errors="replace").strip()
 
-        # The OSC address is our base64-encoded JSON response
-        # (udpsend uses the outlet symbol as the OSC address)
+    @staticmethod
+    def _decode_m4l_payload(osc_str: str) -> Dict[str, Any]:
+        """Decode a single (non-chunked) M4L response payload."""
+        # Try base64 decode first
         try:
-            decoded = base64.b64decode(osc_address).decode("utf-8")
+            decoded = base64.b64decode(osc_str).decode("utf-8")
             return json.loads(decoded)
         except Exception:
             pass
 
-        # Fallback: try raw JSON (in case response wasn't base64-encoded)
+        # Fallback: raw JSON
         try:
-            return json.loads(osc_address)
+            return json.loads(osc_str)
         except (json.JSONDecodeError, ValueError):
             pass
 
-        # Last resort: strip all nulls and try
-        cleaned = data.replace(b"\x00", b"").strip()
-        text = cleaned.decode("utf-8", errors="replace").strip()
-        # Remove trailing comma from OSC type tag
-        text = text.rstrip(",").strip()
+        # Last resort: strip trailing comma from OSC type tag
+        text = osc_str.rstrip(",").strip()
         try:
             decoded = base64.b64decode(text).decode("utf-8")
             return json.loads(decoded)
         except Exception:
             pass
 
-        raise json.JSONDecodeError("Could not parse M4L response", text, 0)
+        raise json.JSONDecodeError("Could not parse M4L response", osc_str, 0)
+
+    def _reassemble_chunked_response(self, first_chunk: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+        """Reassemble a multi-part chunked response from the M4L bridge.
+
+        Rev 3 protocol — chunk metadata is embedded inside the JSON:
+          {"_c": chunk_index, "_t": total_chunks, "_d": "<piece of original json>"}
+        Each chunk is base64-encoded independently, so every outlet() call
+        sends pure valid base64 (no custom prefixes that break Max's OSC).
+        """
+        total_chunks = int(first_chunk["_t"])
+        chunks: Dict[int, str] = {}
+        chunks[int(first_chunk["_c"])] = first_chunk["_d"]
+        logger.debug("M4L chunked response (Rev3): chunk %d/%d", int(first_chunk["_c"]) + 1, total_chunks)
+
+        # Receive remaining chunks
+        while len(chunks) < total_chunks:
+            try:
+                data, _addr = self.recv_sock.recvfrom(65535)
+                osc_str = self._extract_osc_address(data)
+                chunk = self._decode_m4l_payload(osc_str)
+
+                if isinstance(chunk, dict) and "_c" in chunk and "_t" in chunk:
+                    idx = int(chunk["_c"])
+                    chunks[idx] = chunk["_d"]
+                    logger.debug("M4L chunked response (Rev3): chunk %d/%d", idx + 1, total_chunks)
+                else:
+                    logger.warning("Expected chunk packet, got non-chunk data; ignoring")
+                    continue
+            except socket.timeout:
+                raise Exception(
+                    f"Timeout waiting for M4L chunked response: received {len(chunks)}/{total_chunks} chunks"
+                )
+
+        # Reassemble: concatenate _d values in order → full original JSON string
+        full_json_str = "".join(chunks[i] for i in range(total_chunks))
+        logger.debug("M4L chunked response reassembled: %d chars JSON", len(full_json_str))
+
+        return json.loads(full_json_str)
 
     def ping(self) -> bool:
         """Check if the M4L bridge device is responding."""
@@ -3308,8 +3351,8 @@ def create_clip_automation(ctx: Context, track_index: int, clip_index: int,
     - parameter_name: Name of the parameter to automate (e.g., "Device On", "Volume")
     - automation_points: List of {time: float, value: float} dictionaries
 
-    Note: Limited support - works best with MIDI clips and basic device parameters.
-    Arrangement automation is not supported via the API.
+    Supports mixer parameters (Volume, Pan, Sends) and all device parameters
+    on both MIDI and audio clips. For arrangement-level automation, use create_track_automation.
     """
     try:
         _validate_index(track_index, "track_index")
@@ -5403,11 +5446,11 @@ def set_wavetable_properties(
     unison_mode: int = None,
     unison_voice_count: int = None
 ) -> str:
-    """Set properties on a Wavetable device (oscillator, filter, unison, voice settings).
+    """Set properties on a Wavetable device (oscillator settings).
 
     Use get_wavetable_info() to see available wavetable categories and current values.
 
-    RELIABLE properties (oscillator settings):
+    Settable properties (oscillator settings via M4L bridge):
     - oscillator_1_wavetable_category: Category index for Osc 1
     - oscillator_1_wavetable_index: Wavetable index within category for Osc 1
     - oscillator_2_wavetable_category: Category index for Osc 2
@@ -5415,12 +5458,10 @@ def set_wavetable_properties(
     - oscillator_1_effect_mode: Effect mode for Osc 1
     - oscillator_2_effect_mode: Effect mode for Osc 2
 
-    LIMITED properties (may not take effect via M4L — use get_wavetable_info to read them):
-    - filter_routing: 0=Serial, 1=Parallel, 2=Split
-    - mono_poly: 0=Mono, 1=Poly
-    - poly_voices: Number of polyphony voices
-    - unison_mode: 0=None, 1=Classic, 2=Shimmer, 3=Noise, 4=Phase Sync, 5=Position Spread
-    - unison_voice_count: Number of unison voices
+    READ-ONLY properties (cannot be set via any API — use Ableton's GUI):
+    - filter_routing, mono_poly, poly_voices, unison_mode, unison_voice_count
+    These are readable via get_wavetable_info() but not exposed as DeviceParameters
+    and LiveAPI.set() silently fails. This is a confirmed Ableton API limitation.
 
     Parameters:
     - track_index: Track containing the Wavetable
@@ -5432,8 +5473,19 @@ def set_wavetable_properties(
         _validate_index(track_index, "track_index")
         _validate_index(device_index, "device_index")
 
-        props = {}
-        local_vars = {
+        # Settable properties (oscillator settings — work via M4L LiveAPI.set())
+        settable_keys = {
+            "oscillator_1_wavetable_category", "oscillator_1_wavetable_index",
+            "oscillator_2_wavetable_category", "oscillator_2_wavetable_index",
+            "oscillator_1_effect_mode", "oscillator_2_effect_mode",
+        }
+        # Read-only properties — not exposed as DeviceParameters, LiveAPI.set() fails
+        readonly_keys = {
+            "filter_routing", "mono_poly", "poly_voices",
+            "unison_mode", "unison_voice_count",
+        }
+
+        all_vars = {
             "oscillator_1_wavetable_category": oscillator_1_wavetable_category,
             "oscillator_1_wavetable_index": oscillator_1_wavetable_index,
             "oscillator_2_wavetable_category": oscillator_2_wavetable_category,
@@ -5446,44 +5498,61 @@ def set_wavetable_properties(
             "unison_mode": unison_mode,
             "unison_voice_count": unison_voice_count,
         }
-        for key, val in local_vars.items():
-            if val is not None:
-                props[key] = val
 
-        if not props:
+        props = {}
+        readonly_requested = []
+        for key, val in all_vars.items():
+            if val is None:
+                continue
+            if key in settable_keys:
+                props[key] = val
+            elif key in readonly_keys:
+                readonly_requested.append(key)
+
+        if not props and not readonly_requested:
             return "No properties specified to set."
 
-        m4l = get_m4l_connection()
-        result = m4l.send_command("set_wavetable_props", {
-            "track_index": track_index,
-            "device_index": device_index,
-            "properties": props,
-        })
+        output_parts = []
 
-        data = result.get("result", result)
+        # Set oscillator properties via M4L
+        if props:
+            m4l = get_m4l_connection()
+            result = m4l.send_command("set_wavetable_props", {
+                "track_index": track_index,
+                "device_index": device_index,
+                "properties": props,
+            })
 
-        if data.get("error"):
-            return f"Error: {data['error']}"
+            data = result.get("result", result)
 
-        set_count = data.get('properties_set', 0)
-        details = data.get('details', [])
-        errors = data.get('errors', [])
+            if data.get("error"):
+                return f"Error: {data['error']}"
 
-        output = f"Set {set_count} Wavetable properties."
-        if details:
-            output += "\nDetails:\n"
-            for d in details:
-                note = d.get('note', '')
-                if note:
-                    output += f"  {d['property']} = {d.get('value', '?')} ({note})\n"
-                else:
-                    output += f"  {d['property']} = {d.get('value', '?')}\n"
-        if errors:
-            output += "\nErrors:\n"
-            for err in errors:
-                output += f"  {err['property']}: {err['error']}\n"
+            set_count = data.get('properties_set', 0)
+            details = data.get('details', [])
+            errors = data.get('errors', [])
 
-        return output
+            output_parts.append(f"Set {set_count} Wavetable properties.")
+            if details:
+                output_parts.append("Details:")
+                for d in details:
+                    output_parts.append(f"  {d['property']} = {d.get('value', '?')}")
+            if errors:
+                output_parts.append("Errors:")
+                for err in errors:
+                    output_parts.append(f"  {err['property']}: {err['error']}")
+
+        # Report read-only properties
+        if readonly_requested:
+            names = ", ".join(readonly_requested)
+            output_parts.append(
+                f"\nCannot set: {names} — these Wavetable properties are read-only "
+                f"(not exposed as DeviceParameters, LiveAPI.set() silently fails). "
+                f"Use get_wavetable_info() to read their current values. "
+                f"Change them manually in Ableton's GUI."
+            )
+
+        return "\n".join(output_parts)
     except ConnectionError as e:
         return f"M4L bridge not available: {e}"
     except Exception as e:

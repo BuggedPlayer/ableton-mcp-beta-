@@ -21,7 +21,7 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 ### New: Wavetable Modulation Matrix (3 tools, requires M4L)
 - `get_wavetable_info` — get Wavetable device state: oscillator wavetable categories/indices, modulation matrix with active modulations, voice/unison/filter settings
 - `set_wavetable_modulation` — set modulation amount in Wavetable's mod matrix (sources: Env2, Env3, LFO1, LFO2)
-- `set_wavetable_properties` — set oscillator wavetable category/index, filter routing, mono/poly, unison mode/voices, effect modes
+- `set_wavetable_properties` — set oscillator wavetable category/index, effect modes. Voice/unison/filter properties are read-only (Ableton API limitation)
 
 ### M4L Bridge v2.0.0
 - **9 new OSC commands**: `/discover_chains`, `/get_chain_device_params`, `/set_chain_device_param`, `/get_simpler_info`, `/set_simpler_sample_props`, `/simpler_slice`, `/get_wavetable_info`, `/set_wavetable_modulation`, `/set_wavetable_props`
@@ -45,9 +45,18 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 - **`get_return_tracks_info`** — use `get_return_tracks` instead
 
 ### Bug Fixes & Improvements
-- **Fixed `set_wavetable_properties` crash**: removed post-set `get()` read-back verification that crashed Ableton. Now uses fire-and-forget `set()` with two-tier property classification: Tier 1 (oscillator properties — reliable) and Tier 2 (unison/filter/voice — documented as limited)
+- **Fixed `set_wavetable_properties` crash**: removed post-set `get()` read-back verification that crashed Ableton. Now uses fire-and-forget `set()` for oscillator properties via M4L
+- **Fixed `set_device_hidden_parameter` crash**: removed post-set `paramApi.get("value")` readback in `setHiddenParam()` — same crash pattern as the wavetable fix. Now reports clamped value instead of reading back
+- **Confirmed Wavetable voice properties read-only**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` are NOT exposed as DeviceParameters (verified against full 93-parameter list). Neither M4L `LiveAPI.set()` nor TCP `set_device_parameter` can write them — hard Ableton API limitation. `set_wavetable_properties` now returns a clear error message for these
 - **Fixed `discover_rack_chains` nested rack support**: added optional `chain_path` parameter to target devices inside chains (e.g. `"chains 0 devices 0"` for nested racks)
 - **Fixed `discover_rack_chains` crash on large drum racks**: refactored `discoverChainsAtPath` to reuse LiveAPI objects via `goto()` instead of creating ~193 new objects per call. Now uses 3 cursor objects total, preventing Max `[js]` memory exhaustion
+- **Fixed `discover_device_params` crash on large devices**: two root causes found and fixed:
+  1. **Synchronous LiveAPI overload**: >~210 `get()` calls in a single [js] execution crashes Ableton. Fixed by chunked async discovery (4 params/chunk with 50ms `Task.schedule()` delays)
+  2. **Response size through outlet/udpsend**: >~8KB base64 via Max `outlet()` crashes Ableton. Fixed by chunked response protocol: large responses are split into <5.5KB packets with `CHUNK|id|idx|total|payload` headers, reassembled by the Python server
+- **Chunked response protocol**: M4L bridge now splits large responses (>5.5KB base64) into multiple UDP packets. Python server reassembles them automatically. Small responses sent as-is (backward compatible)
+- **Fixed `set_chain_device_parameter` crash**: removed post-set `paramApi.get("value")` readback in `handleSetChainDeviceParam()` — same crash pattern as wavetable and hidden param fixes
+- **Fixed `batch_set_hidden_parameters` LiveAPI exhaustion**: refactored `_batchProcessNextChunk()` to reuse a single cursor via `goto()` instead of creating new LiveAPI per parameter (93 objects → 1)
+- **Fixed Remote Script crash on client disconnect**: wrapped `client.sendall()` response send in try/except to handle broken connections cleanly instead of propagating the error
 - **Fixed `grid_to_clip` silent failures**: `except Exception: pass` replaced with proper error returns
 - **Fixed `generate_preset` device targeting**: improved docstring guidance to target synth, not effects
 - **Reduced bruteforce resolver logging**: removed per-iteration logging from `devices.py` — only MATCH and ERROR logged now

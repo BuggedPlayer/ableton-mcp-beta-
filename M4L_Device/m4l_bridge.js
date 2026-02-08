@@ -140,8 +140,10 @@ function handleDiscoverParams(args) {
     var deviceIdx = parseInt(args[1]);
     var requestId = args[2].toString();
 
-    var result = discoverParams(trackIdx, deviceIdx);
-    sendResult(result, requestId);
+    // Use chunked async discovery to avoid crashing Ableton.
+    // Synchronous iteration of 40+ params with full readParamInfo() (7 get()
+    // calls each) exceeds Max [js] scheduler tolerance and crashes.
+    _startChunkedDiscover(trackIdx, deviceIdx, requestId);
 }
 
 function handleGetHiddenParams(args) {
@@ -154,8 +156,7 @@ function handleGetHiddenParams(args) {
     var deviceIdx = parseInt(args[1]);
     var requestId = args[2].toString();
 
-    var result = discoverParams(trackIdx, deviceIdx);
-    sendResult(result, requestId);
+    _startChunkedDiscover(trackIdx, deviceIdx, requestId);
 }
 
 function handleSetHiddenParam(args) {
@@ -172,6 +173,91 @@ function handleSetHiddenParam(args) {
 
     var result = setHiddenParam(trackIdx, deviceIdx, paramIdx, value);
     sendResult(result, requestId);
+}
+
+// ---------------------------------------------------------------------------
+// Chunked parameter discovery
+//
+// Reading all parameters for a large device (e.g. Wavetable, 93 params) in a
+// single synchronous call crashes Ableton — the Max [js] scheduler can't
+// handle ~280+ LiveAPI get() calls without yielding.  Threshold is around
+// 30 params × 7 get() calls = ~210 calls.
+//
+// Solution: process params in small chunks with deferred callbacks between
+// them, same pattern as batch_set_hidden_params.
+// ---------------------------------------------------------------------------
+var DISCOVER_CHUNK_SIZE = 4;    // params per chunk (4 × 7 gets = 28 — well under limit)
+var DISCOVER_CHUNK_DELAY = 50;  // ms between chunks
+
+var _discoverState = null;
+
+function _startChunkedDiscover(trackIdx, deviceIdx, requestId) {
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    _startChunkedDiscoverAtPath(devicePath, requestId);
+}
+
+function _startChunkedDiscoverAtPath(devicePath, requestId) {
+    var cursor = new LiveAPI(null, devicePath);
+
+    if (!cursor || !cursor.id || parseInt(cursor.id) === 0) {
+        sendResult({ error: "No device found at path: " + devicePath }, requestId);
+        return;
+    }
+
+    var deviceName  = cursor.get("name").toString();
+    var deviceClass = cursor.get("class_name").toString();
+    var paramCount  = parseInt(cursor.getcount("parameters"));
+
+    _discoverState = {
+        devicePath:  devicePath,
+        deviceName:  deviceName,
+        deviceClass: deviceClass,
+        paramCount:  paramCount,
+        cursor:      cursor,
+        idx:         0,
+        parameters:  [],
+        requestId:   requestId
+    };
+
+    // Start processing the first chunk
+    _discoverNextChunk();
+}
+
+function _discoverNextChunk() {
+    if (!_discoverState) return;
+
+    var s = _discoverState;
+    var end = Math.min(s.idx + DISCOVER_CHUNK_SIZE, s.paramCount);
+
+    for (var i = s.idx; i < end; i++) {
+        s.cursor.goto(s.devicePath + " parameters " + i);
+
+        if (!s.cursor.id || parseInt(s.cursor.id) === 0) {
+            continue;
+        }
+
+        var paramInfo = readParamInfo(s.cursor, i);
+        s.parameters.push(paramInfo);
+    }
+
+    s.idx = end;
+
+    if (s.idx >= s.paramCount) {
+        // All chunks done — clean up cursor and send response
+        s.cursor.goto(s.devicePath);
+
+        sendResult({
+            device_name:     s.deviceName,
+            device_class:    s.deviceClass,
+            parameter_count: s.parameters.length,
+            parameters:      s.parameters
+        }, s.requestId);
+        _discoverState = null;
+    } else {
+        // Schedule the next chunk after a short delay
+        var t = new Task(_discoverNextChunk);
+        t.schedule(DISCOVER_CHUNK_DELAY);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -264,14 +350,17 @@ function handleBatchSetHiddenParams(args) {
     }
 
     // Initialize chunked batch state
+    // paramCursor: reusable LiveAPI object navigated via goto() — avoids creating
+    // N new LiveAPI objects (same fix as discoverParams/discoverChainsAtPath)
     _batchState = {
-        devicePath: devicePath,
-        paramsList: safeParams,
-        requestId:  requestId,
-        cursor:     0,
-        okCount:    0,
-        failCount:  0,
-        errors:     [],
+        devicePath:  devicePath,
+        paramsList:  safeParams,
+        requestId:   requestId,
+        cursor:      0,
+        paramCursor: new LiveAPI(null, devicePath),
+        okCount:     0,
+        failCount:   0,
+        errors:      [],
         skippedDeviceOn: skippedDeviceOn,
         totalRequested:  paramsList.length
     };
@@ -290,27 +379,26 @@ function _batchProcessNextChunk() {
         var paramIdx = parseInt(s.paramsList[i].index);
         var value    = parseFloat(s.paramsList[i].value);
 
-        var paramPath = s.devicePath + " parameters " + paramIdx;
-        var paramApi;
+        // Reuse paramCursor via goto() instead of new LiveAPI() per param
         try {
-            paramApi = new LiveAPI(null, paramPath);
+            s.paramCursor.goto(s.devicePath + " parameters " + paramIdx);
         } catch (e) {
             s.errors.push({ index: paramIdx, error: "LiveAPI error: " + e.toString() });
             s.failCount++;
             continue;
         }
 
-        if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
+        if (!s.paramCursor.id || parseInt(s.paramCursor.id) === 0) {
             s.errors.push({ index: paramIdx, error: "not found" });
             s.failCount++;
             continue;
         }
 
         try {
-            var minVal  = parseFloat(paramApi.get("min"));
-            var maxVal  = parseFloat(paramApi.get("max"));
+            var minVal  = parseFloat(s.paramCursor.get("min"));
+            var maxVal  = parseFloat(s.paramCursor.get("max"));
             var clamped = Math.max(minVal, Math.min(maxVal, value));
-            paramApi.set("value", clamped);
+            s.paramCursor.set("value", clamped);
             s.okCount++;
         } catch (e) {
             s.errors.push({ index: paramIdx, error: e.toString() });
@@ -537,8 +625,8 @@ function handleGetChainDeviceParams(args) {
 
     var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx
                    + " chains " + chainIdx + " devices " + chainDevIdx;
-    var result = discoverParamsAtPath(devicePath);
-    sendResult(result, requestId);
+    // Use chunked discovery — same crash-safe pattern as handleDiscoverParams
+    _startChunkedDiscoverAtPath(devicePath, requestId);
 }
 
 function handleSetChainDeviceParam(args) {
@@ -571,13 +659,13 @@ function handleSetChainDeviceParam(args) {
         var maxVal    = parseFloat(paramApi.get("max"));
         var clamped   = Math.max(minVal, Math.min(maxVal, value));
         paramApi.set("value", clamped);
-        var actualValue = parseFloat(paramApi.get("value"));
+        // NO readback — get() after set() can crash Ableton
 
         sendResult({
             parameter_name:  paramName,
             parameter_index: paramIdx,
             requested_value: value,
-            actual_value:    actualValue,
+            actual_value:    clamped,
             was_clamped:     (clamped !== value)
         }, requestId);
     } catch (e) {
@@ -1105,44 +1193,6 @@ function handleSetWavetableProps(args) {
 }
 
 // ---------------------------------------------------------------------------
-// Generic LOM helpers — used by chain navigation and other features
-// ---------------------------------------------------------------------------
-
-function discoverParamsAtPath(devicePath) {
-    var deviceApi = new LiveAPI(null, devicePath);
-
-    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
-        return { error: "No device found at path: " + devicePath };
-    }
-
-    var deviceName  = deviceApi.get("name").toString();
-    var deviceClass = deviceApi.get("class_name").toString();
-
-    var paramCount = parseInt(deviceApi.getcount("parameters"));
-    var parameters = [];
-
-    // Reuse a single cursor via goto() — same fix as discoverParams()
-    var cursor = new LiveAPI(null, devicePath);
-    for (var i = 0; i < paramCount; i++) {
-        cursor.goto(devicePath + " parameters " + i);
-
-        if (!cursor.id || parseInt(cursor.id) === 0) {
-            continue;
-        }
-
-        var paramInfo = readParamInfo(cursor, i);
-        parameters.push(paramInfo);
-    }
-
-    return {
-        device_name:     deviceName,
-        device_class:    deviceClass,
-        parameter_count: parameters.length,
-        parameters:      parameters
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
 
@@ -1168,11 +1218,90 @@ function sendError(message, requestId) {
     sendResponse(JSON.stringify(response));
 }
 
+// ---------------------------------------------------------------------------
+// Chunked response sending  (Revision 3b — URL-safe base64)
+//
+// Max's [js] outlet() has a practical symbol size limit of ~8KB.  Responses
+// larger than that crash Ableton.  Additionally, standard base64 contains
+// '+' and '/' characters that confuse Max's OSC routing (/ is a path
+// separator in OSC addresses).
+//
+// Rev 3 (splitting raw JSON + escaping) failed because _jsonEscape()
+// inflates pieces (doubling every " character) — final base64 exceeded 8KB.
+//
+// Rev 3b solution:
+//   1. Encode full JSON → standard base64
+//   2. Convert to URL-safe base64 (+ → -, / → _, strip =)
+//   3. If small (≤ 5500) → send as-is
+//   4. If large → split URL-safe base64 into 4000-char pieces
+//   5. Wrap each piece: {"_c":idx,"_t":total,"_d":"<piece>"}
+//      (piece is pure [A-Za-z0-9_-] — zero escaping overhead!)
+//   6. Base64-encode each envelope → URL-safe → outlet()
+//
+// Each outlet() call sends pure [A-Za-z0-9_-] — no OSC-special chars.
+// Python server detects chunks by checking for "_c"/"_t" keys.
+// ---------------------------------------------------------------------------
+var RESPONSE_PIECE_SIZE  = 4000;  // chars of URL-safe base64 per chunk
+var RESPONSE_CHUNK_DELAY = 50;    // ms between outlet() calls
+var _responseSendState   = null;  // global state for deferred chunk sending
+
+function _toUrlSafeBase64(b64) {
+    // Standard base64 → URL-safe: + → -, / → _, strip = padding
+    var result = "";
+    for (var i = 0; i < b64.length; i++) {
+        var c = b64.charAt(i);
+        if (c === "+") result += "-";
+        else if (c === "/") result += "_";
+        else if (c === "=") { /* skip padding */ }
+        else result += c;
+    }
+    return result;
+}
+
 function sendResponse(jsonStr) {
-    // Base64-encode the response so it travels safely through Max messaging
-    // (Max treats curly braces as special characters)
-    var encoded = _base64encode(jsonStr);
-    outlet(0, encoded);
+    var encoded = _toUrlSafeBase64(_base64encode(jsonStr));
+
+    if (encoded.length <= 5500) {
+        // Small response — send as single packet (backward compatible)
+        outlet(0, encoded);
+        return;
+    }
+
+    // Large response — split URL-safe base64 into pieces
+    var totalChunks = Math.ceil(encoded.length / RESPONSE_PIECE_SIZE);
+    post("sendResponse: splitting " + encoded.length + " url-safe-b64 chars into " + totalChunks + " chunks\n");
+
+    _responseSendState = {
+        encoded:     encoded,
+        pieceSize:   RESPONSE_PIECE_SIZE,
+        totalChunks: totalChunks,
+        idx:         0
+    };
+
+    // Send first chunk immediately, schedule rest via Task
+    _sendNextResponsePiece();
+}
+
+function _sendNextResponsePiece() {
+    if (!_responseSendState) return;
+    var s = _responseSendState;
+
+    var start = s.idx * s.pieceSize;
+    var end   = Math.min(start + s.pieceSize, s.encoded.length);
+    var piece = s.encoded.substring(start, end);
+
+    // piece is pure [A-Za-z0-9_-] — no escaping needed!
+    var chunkJson = '{"_c":' + s.idx + ',"_t":' + s.totalChunks + ',"_d":"' + piece + '"}';
+    var chunkB64  = _toUrlSafeBase64(_base64encode(chunkJson));
+    outlet(0, chunkB64);
+
+    s.idx++;
+    if (s.idx < s.totalChunks) {
+        var t = new Task(_sendNextResponsePiece);
+        t.schedule(RESPONSE_CHUNK_DELAY);
+    } else {
+        _responseSendState = null;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,46 +1347,6 @@ function _base64decode(str) {
         if (i - 1 <= str.length) result += String.fromCharCode(triplet & 255);
     }
     return result;
-}
-
-// ---------------------------------------------------------------------------
-// LOM access: discover all parameters for a device
-// ---------------------------------------------------------------------------
-function discoverParams(trackIdx, deviceIdx) {
-    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
-    var deviceApi  = new LiveAPI(null, devicePath);
-
-    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
-        return { error: "No device found at track " + trackIdx + " device " + deviceIdx + "." };
-    }
-
-    var deviceName  = deviceApi.get("name").toString();
-    var deviceClass = deviceApi.get("class_name").toString();
-
-    var paramCount = parseInt(deviceApi.getcount("parameters"));
-    var parameters = [];
-
-    // Reuse a single cursor via goto() instead of creating N new LiveAPI objects.
-    // For a 93-param device this reduces objects from 94 to 2, preventing
-    // Max [js] memory exhaustion (same fix as discoverChainsAtPath).
-    var cursor = new LiveAPI(null, devicePath);
-    for (var i = 0; i < paramCount; i++) {
-        cursor.goto(devicePath + " parameters " + i);
-
-        if (!cursor.id || parseInt(cursor.id) === 0) {
-            continue;
-        }
-
-        var paramInfo = readParamInfo(cursor, i);
-        parameters.push(paramInfo);
-    }
-
-    return {
-        device_name:     deviceName,
-        device_class:    deviceClass,
-        parameter_count: parameters.length,
-        parameters:      parameters
-    };
 }
 
 // ---------------------------------------------------------------------------

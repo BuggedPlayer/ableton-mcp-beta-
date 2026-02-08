@@ -295,7 +295,7 @@ A JavaScript file (v2.0.0) running inside a Max for Live `[js]` object. It provi
 |---|---|---|
 | `get_wavetable_info` | `track_index: int, device_index: int` | Get Wavetable device state: oscillator wavetables, modulation matrix, unison, filter routing |
 | `set_wavetable_modulation` | `track_index: int, device_index: int, target_index: int, source_index: int, amount: float` | Set modulation amount in Wavetable's mod matrix. Sources: 0=Env2, 1=Env3, 2=LFO1, 3=LFO2 |
-| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable properties: oscillator wavetable category/index, effect modes (reliable). Filter routing, unison, voices are attempted but may not take effect via M4L |
+| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable oscillator wavetable category/index and effect modes. Voice/unison/filter properties are read-only (see Limitations) |
 
 ### Snapshot & Versioning (v1.6.0)
 
@@ -459,7 +459,7 @@ Navigate inside Instrument Racks, Audio Effect Racks, and Drum Racks. Discover c
 Read and control Simpler's loaded sample properties: start/end markers, warp mode, gain, slicing sensitivity. Manage slices programmatically (insert, remove, clear, reset). Access warp-mode-specific properties (beats granulation, texture flux, complex pro formants, etc.).
 
 ### Wavetable Modulation Matrix (NEW — requires M4L)
-Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections and effect modes. Voice/unison/filter properties can be read but not written due to a Max for Live LiveAPI limitation (see Known Limitations).
+Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections and effect modes via M4L. Voice/unison/filter properties (unison mode, unison voices, filter routing, mono/poly, poly voices) can be read via `get_wavetable_info` but are read-only — not exposed as DeviceParameters (see Limitations).
 
 ### Full Automation Support (v1.8.0+)
 **Clip automation**: Create, read, clear, and discover automation on any automatable parameter (Volume, Pan, Sends, device parameters) on both MIDI and audio clips. Tools: `create_clip_automation`, `get_clip_automation`, `clear_clip_automation`, `list_clip_automated_parameters`.
@@ -658,7 +658,7 @@ This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP se
 
 - **VST/AU plugins** cannot be loaded directly (Ableton API limitation) — save as Instrument Rack preset first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`. Built-in Ableton devices can be loaded by name (e.g. `"Wavetable"`, `"Reverb"`) — auto-resolved via browser cache
 - **Arrangement clips** are read-only after placement — edit clips in session view, then place on the timeline with `duplicate_clip_to_arrangement`. Use `get_arrangement_clips` to read, and `delete_time` / `duplicate_time` / `insert_silence` for structural edits
-- **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but **cannot be written** via `set_wavetable_properties`. This is a Max for Live `LiveAPI.set()` limitation — these properties are documented in the LOM but `set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably
+- **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but are **read-only** — not exposed as DeviceParameters (verified against full 93-parameter list) and `LiveAPI.set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably. Change voice/unison/filter settings manually in Ableton's GUI
 - **Large sessions**: For best results, break arrangement tasks into smaller tool calls (e.g. place clips first, then add automation, then adjust mixing)
 
 ## Troubleshooting

@@ -393,12 +393,16 @@ class M4LConnection:
         request_id = str(uuid.uuid4())[:8]
         osc = self._build_osc_packet(command_type, params, request_id)
 
-        # Batch operations use chunked processing in the M4L device with
-        # delays between chunks, so they need a longer timeout.
+        # Chunked operations (batch set, param discovery) use deferred
+        # callbacks in the M4L device and need longer timeouts.
         if command_type == "batch_set_hidden_params":
             param_count = len(params.get("parameters", []))
             # ~150ms per param (chunk delay + LOM overhead), minimum 10s
             timeout = max(10.0, param_count * 0.15)
+        elif command_type in ("discover_params", "get_hidden_params", "get_chain_device_params"):
+            # Chunked discovery: ~50ms per 4-param chunk + LOM overhead
+            # 93 params → ~24 chunks → ~1.2s + overhead. Use 10s for safety.
+            timeout = 10.0
         else:
             timeout = 5.0
 
@@ -430,7 +434,13 @@ class M4LConnection:
 
             try:
                 data, _addr = self.recv_sock.recvfrom(65535)
-                result = self._parse_m4l_response(data)
+                osc_str = self._extract_osc_address(data)
+                result = self._decode_m4l_payload(osc_str)
+
+                # Check for chunked response (Rev 3: chunk metadata inside JSON)
+                if isinstance(result, dict) and "_c" in result and "_t" in result:
+                    result = self._reassemble_chunked_response(result, timeout)
+
                 # Verify request_id matches (warn on mismatch but don't fail)
                 resp_id = result.get("id", "")
                 if resp_id and resp_id != request_id:
@@ -445,47 +455,99 @@ class M4LConnection:
                 raise Exception("Timeout waiting for M4L bridge response. Is the M4L device loaded?")
 
     @staticmethod
-    def _parse_m4l_response(data: bytes) -> Dict[str, Any]:
-        """Parse the response from the M4L bridge.
+    def _extract_osc_address(data: bytes) -> str:
+        """Extract the OSC address string from a raw UDP packet.
 
-        Max's udpsend wraps the base64 string as an OSC message:
-          [base64_string\\0...padding][,\\0\\0\\0]
-        The OSC address (first null-terminated string) contains our
-        base64-encoded JSON response.
+        Max's udpsend wraps the outlet symbol as an OSC message:
+          [symbol\\0...padding][,\\0\\0\\0]
         """
-        # Extract the OSC address = first null-terminated string in the packet
         null_pos = data.find(b"\x00")
         if null_pos > 0:
-            osc_address = data[:null_pos].decode("utf-8", errors="replace").strip()
-        else:
-            osc_address = data.decode("utf-8", errors="replace").strip()
+            return data[:null_pos].decode("utf-8", errors="replace").strip()
+        return data.decode("utf-8", errors="replace").strip()
 
-        # The OSC address is our base64-encoded JSON response
-        # (udpsend uses the outlet symbol as the OSC address)
+    @staticmethod
+    def _from_urlsafe_b64(s: str) -> str:
+        """Decode a URL-safe base64 string (- instead of +, _ instead of /, no = padding)."""
+        # Convert URL-safe chars back to standard base64
+        s = s.replace("-", "+").replace("_", "/")
+        # Re-add padding
+        pad = len(s) % 4
+        if pad:
+            s += "=" * (4 - pad)
+        return base64.b64decode(s).decode("utf-8")
+
+    @staticmethod
+    def _decode_m4l_payload(osc_str: str) -> Dict[str, Any]:
+        """Decode a single M4L response payload (standard or URL-safe base64)."""
+        # Try URL-safe base64 first (Rev 3b: - instead of +, _ instead of /)
         try:
-            decoded = base64.b64decode(osc_address).decode("utf-8")
+            decoded = M4LConnection._from_urlsafe_b64(osc_str)
             return json.loads(decoded)
         except Exception:
             pass
 
-        # Fallback: try raw JSON (in case response wasn't base64-encoded)
+        # Try standard base64
         try:
-            return json.loads(osc_address)
+            decoded = base64.b64decode(osc_str).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            pass
+
+        # Fallback: raw JSON
+        try:
+            return json.loads(osc_str)
         except (json.JSONDecodeError, ValueError):
             pass
 
-        # Last resort: strip all nulls and try
-        cleaned = data.replace(b"\x00", b"").strip()
-        text = cleaned.decode("utf-8", errors="replace").strip()
-        # Remove trailing comma from OSC type tag
-        text = text.rstrip(",").strip()
+        # Last resort: strip trailing comma from OSC type tag
+        text = osc_str.rstrip(",").strip()
         try:
             decoded = base64.b64decode(text).decode("utf-8")
             return json.loads(decoded)
         except Exception:
             pass
 
-        raise json.JSONDecodeError("Could not parse M4L response", text, 0)
+        raise json.JSONDecodeError("Could not parse M4L response", osc_str, 0)
+
+    def _reassemble_chunked_response(self, first_chunk: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+        """Reassemble a multi-part chunked response from the M4L bridge.
+
+        Rev 3b protocol — chunk metadata is embedded inside the JSON:
+          {"_c": chunk_index, "_t": total_chunks, "_d": "<url-safe base64 piece>"}
+        Each chunk is URL-safe base64 encoded independently.
+        The _d values are pieces of the full URL-safe base64 of the original JSON.
+        """
+        total_chunks = int(first_chunk["_t"])
+        chunks: Dict[int, str] = {}
+        chunks[int(first_chunk["_c"])] = first_chunk["_d"]
+        logger.debug("M4L chunked response (Rev3b): chunk %d/%d", int(first_chunk["_c"]) + 1, total_chunks)
+
+        # Receive remaining chunks
+        while len(chunks) < total_chunks:
+            try:
+                data, _addr = self.recv_sock.recvfrom(65535)
+                osc_str = self._extract_osc_address(data)
+                chunk = self._decode_m4l_payload(osc_str)
+
+                if isinstance(chunk, dict) and "_c" in chunk and "_t" in chunk:
+                    idx = int(chunk["_c"])
+                    chunks[idx] = chunk["_d"]
+                    logger.debug("M4L chunked response (Rev3b): chunk %d/%d", idx + 1, total_chunks)
+                else:
+                    logger.warning("Expected chunk packet, got non-chunk data; ignoring")
+                    continue
+            except socket.timeout:
+                raise Exception(
+                    f"Timeout waiting for M4L chunked response: received {len(chunks)}/{total_chunks} chunks"
+                )
+
+        # Reassemble: concatenate _d values → full URL-safe base64 → decode → JSON
+        full_urlsafe_b64 = "".join(chunks[i] for i in range(total_chunks))
+        logger.debug("M4L chunked response reassembled: %d chars URL-safe base64", len(full_urlsafe_b64))
+
+        full_json_str = M4LConnection._from_urlsafe_b64(full_urlsafe_b64)
+        return json.loads(full_json_str)
 
     def ping(self) -> bool:
         """Check if the M4L bridge device is responding."""
