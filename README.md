@@ -1,14 +1,12 @@
 # AbletonMCP - Ableton Live Model Context Protocol Integration
 
-AbletonMCP connects Ableton Live to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Ableton Live. This integration enables prompt-assisted music production, track creation, and Live session manipulation.
+AbletonMCP connects Ableton Live to Claude AI through the Model Context Protocol (MCP), giving Claude direct control over your Live session with **138 tools** across two communication channels.
 
 Based on the original [ableton-mcp](https://github.com/ahujasid/ableton-mcp) by [Siddharth Ahuja](https://x.com/sidahuj).
 
 ---
 
 ## Architecture
-
-The system consists of three components that communicate through two protocols:
 
 ```
 Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
@@ -18,554 +16,91 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
                           +------<--HTTP:9880-->  Web Status Dashboard
 ```
 
-### 1. Ableton Remote Script (`AbletonMCP_Remote_Script/__init__.py`)
-A MIDI Remote Script (Python) that runs inside Ableton Live as a Control Surface. It creates a TCP socket server on port **9877** that listens for JSON commands and executes them against the Live API.
-
-- Extends `ControlSurface` from Ableton's `_Framework`
-- Runs a background thread for the TCP server
-- Handles commands via a dispatch table mapping command types to handler methods
-- Supports Live 10, 11, and 12 APIs with automatic fallbacks
-- Defensive handling for group tracks, return tracks, and edge cases
-
-### 2. MCP Server (`MCP_Server/server.py`)
-A Python server that implements the Model Context Protocol and bridges between the AI client and Ableton. It maintains two connection classes:
-
-- **`AbletonConnection`** — TCP client connecting to the Remote Script on port 9877. Sends newline-delimited JSON commands and receives newline-delimited JSON responses. Includes automatic reconnection logic.
-- **`M4LConnection`** — UDP/OSC client connecting to the Max for Live bridge. Sends native OSC messages on port 9878 and listens for base64-encoded JSON responses on port 9879. Includes auto-reconnect with exponential backoff.
-
-The server exposes **138 MCP tools** that Claude can call. It also runs a **web status dashboard** on port 9880.
-
-**Startup sequence:**
-1. Connect to Ableton Remote Script (TCP port 9877)
-2. Auto-connect to M4L bridge (UDP ports 9878/9879) — no need to wait for a tool call
-3. Start the web status dashboard (HTTP port 9880)
-4. Load browser cache from disk instantly (~50ms) — search and device loading work immediately
-5. Background refresh: BFS scan of 7 browser categories (depth 3, rate-limited) updates cache and saves to disk
-
-### 3. Web Status Dashboard (`http://127.0.0.1:9880`)
-A live web dashboard running on a background daemon thread alongside the MCP server. Built with starlette + uvicorn (already installed as transitive deps of `mcp[cli]`, zero new dependencies). Auto-refreshes every 3 seconds.
-
-- **Status cards**: Server version, uptime, Ableton connection, M4L bridge status, snapshot/macro/param map counts, total tool calls
-- **Most Used Tools**: Bar chart of the top 10 most-called MCP tools
-- **Recent Tool Calls**: Table showing tool name, duration, arguments, and error status for the last 50 tool calls
-- **Server Log**: Real-time terminal-style log viewer with color-coded log levels (INFO, WARNING, ERROR) showing the last 200 server log entries — scroll to see the full boot sequence and all command activity
-- Configurable port via `ABLETON_MCP_DASHBOARD_PORT` environment variable (default: 9880)
-- Non-fatal: if the dashboard fails to start (e.g. port conflict), the MCP server continues normally
-
-### 4. Max for Live Bridge (`M4L_Device/m4l_bridge.js`) *(optional)*
-A JavaScript file (v2.0.0) running inside a Max for Live `[js]` object. It provides deep Live Object Model (LOM) access for:
-- Hidden/non-automatable device parameters
-- Device chain navigation (Instrument Racks, Drum Racks, nested devices)
-- Simpler/Sample deep access (warp markers, slices, sample properties)
-- Wavetable modulation matrix control (mod sources, oscillator wavetables)
+- **Remote Script** (TCP) — 128 tools for tracks, clips, MIDI, mixing, automation, browser, snapshots
+- **M4L Bridge** (UDP/OSC) — 10 tools for hidden parameters, rack chains, Simpler samples, Wavetable modulation
+- **Web Dashboard** — live status, tool metrics, server logs at `http://127.0.0.1:9880`
 
 ---
 
-## Complete Tool Reference (138 Tools)
-
-### Session & Transport
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_session_info` | — | Get detailed information about the current Ableton session (tracks, tempo, time signature, scenes) |
-| `set_tempo` | `tempo: float` | Set the session tempo in BPM |
-| `start_playback` | — | Start playing the session |
-| `stop_playback` | — | Stop playing the session |
-| `get_song_transport` | — | Get arrangement state: playhead position, tempo, time signature, loop bracket, record mode, song length |
-| `set_song_time` | `time: float` | Set the arrangement playhead position (in beats) |
-| `set_song_loop` | `enabled?: bool, start?: float, length?: float` | Control the arrangement loop bracket (enable/disable, set start/length) |
-
-### Track Management
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_track_info` | `track_index: int` | Get detailed info about a track (name, volume, pan, devices, clips, group track support) |
-| `create_midi_track` | `index: int = -1` | Create a new MIDI track (-1 = end of list) |
-| `create_audio_track` | `index: int = -1` | Create a new audio track (-1 = end of list) |
-| `set_track_name` | `track_index: int, name: str` | Set the name of a track |
-| `delete_track` | `track_index: int` | Delete a track from the session |
-| `duplicate_track` | `track_index: int` | Duplicate a track with all its devices and clips |
-
-### Track Mixing
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `set_track_volume` | `track_index: int, volume: float` | Set track volume (0.0-1.0, 0.85 ~ 0dB) |
-| `set_track_pan` | `track_index: int, pan: float` | Set track panning (-1.0 left, 0.0 center, 1.0 right) |
-| `set_track_mute` | `track_index: int, mute: bool` | Mute or unmute a track |
-| `set_track_solo` | `track_index: int, solo: bool` | Solo or unsolo a track |
-| `set_track_arm` | `track_index: int, arm: bool` | Arm or disarm a track for recording |
-| `set_track_send` | `track_index: int, send_index: int, value: float` | Set send level to a return track (0 = Send A, 1 = Send B) |
-
-### Clip Management
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `create_clip` | `track_index: int, clip_index: int, length: float = 4.0` | Create a new MIDI clip in a clip slot |
-| `get_clip_info` | `track_index: int, clip_index: int` | Get detailed clip information |
-| `set_clip_name` | `track_index: int, clip_index: int, name: str` | Set the name of a clip |
-| `delete_clip` | `track_index: int, clip_index: int` | Delete a clip from a clip slot |
-| `duplicate_clip` | `track_index: int, clip_index: int, target_clip_index: int` | Duplicate a clip to another slot on the same track |
-| `fire_clip` | `track_index: int, clip_index: int` | Start playing a clip |
-| `stop_clip` | `track_index: int, clip_index: int` | Stop playing a clip |
-| `set_clip_looping` | `track_index: int, clip_index: int, looping: bool` | Enable or disable clip looping |
-| `set_clip_loop_points` | `track_index: int, clip_index: int, loop_start: float, loop_end: float` | Set loop start and end positions in beats |
-| `set_clip_color` | `track_index: int, clip_index: int, color_index: int` | Set clip color (0-69, Ableton's palette) |
-| `crop_clip` | `track_index: int, clip_index: int` | Trim clip to its current loop region, discarding content outside |
-| `duplicate_clip_loop` | `track_index: int, clip_index: int` | Double the loop content (e.g. 4 bars → 8 bars with content repeated) |
-| `set_clip_start_end` | `track_index: int, clip_index: int, start_marker?: float, end_marker?: float` | Set clip start/end marker positions (controls playback region) |
-| `duplicate_clip_to_arrangement` | `track_index: int, clip_index: int, time: float` | Copy a session clip to the arrangement timeline at a beat position (Live 11+) |
-
-### MIDI Notes
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `add_notes_to_clip` | `track_index: int, clip_index: int, notes: list` | Add MIDI notes to a clip. Each note: `{pitch, start_time, duration, velocity, mute}` |
-| `get_clip_notes` | `track_index: int, clip_index: int, start_time: float, time_span: float, start_pitch: int, pitch_span: int` | Get MIDI notes from a clip |
-| `clear_clip_notes` | `track_index: int, clip_index: int` | Remove all MIDI notes from a clip |
-| `quantize_clip_notes` | `track_index: int, clip_index: int, grid_size: float` | Quantize notes to grid (0.25=16th, 0.5=8th, 1.0=quarter) |
-| `transpose_clip_notes` | `track_index: int, clip_index: int, semitones: int` | Transpose all notes by N semitones |
-| `add_notes_extended` | `track_index: int, clip_index: int, notes: list` | Add notes with Live 11+ properties: `{pitch, start_time, duration, velocity, mute, probability, velocity_deviation, release_velocity}` |
-| `get_notes_extended` | `track_index: int, clip_index: int, start_time?: float, time_span?: float` | Get notes with extended properties (probability, velocity_deviation, release_velocity) |
-| `remove_notes_range` | `track_index: int, clip_index: int, from_time: float, time_span: float, from_pitch?: int, pitch_span?: int` | Selectively remove notes within a specific time and pitch range |
-
-### Automation (v1.8.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `create_clip_automation` | `track_index: int, clip_index: int, parameter_name: str, automation_points: list` | Create automation for a parameter within a clip. Points: `[{time, value}, ...]` |
-| `get_clip_automation` | `track_index: int, clip_index: int, parameter_name: str` | Read existing automation — samples envelope at 64 points across the clip |
-| `clear_clip_automation` | `track_index: int, clip_index: int, parameter_name: str` | Clear automation for a specific parameter in a clip |
-| `list_clip_automated_parameters` | `track_index: int, clip_index: int` | List all parameters that have automation in a clip (mixer, sends, device params) |
-
-### ASCII Grid Notation (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `clip_to_grid` | `track_index: int, clip_index: int` | Read a MIDI clip as ASCII grid notation (auto-detects drum vs melodic) |
-| `grid_to_clip` | `track_index: int, clip_index: int, grid: str, length: float, clear_existing: bool` | Write ASCII grid notation to a MIDI clip (creates clip if needed) |
-
-### Transport & Recording Controls (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_loop_info` | — | Get loop bracket start, end, length, and current playback time |
-| `get_recording_status` | — | Get armed tracks, record mode, and overdub state |
-| `set_loop_start` | `position: float` | Set loop start position in beats |
-| `set_loop_end` | `position: float` | Set loop end position in beats |
-| `set_loop_length` | `length: float` | Set loop length in beats (adjusts end relative to start) |
-| `set_playback_position` | `position: float` | Move the playhead to a specific beat position |
-| `set_arrangement_overdub` | `enabled: bool` | Enable or disable arrangement overdub mode |
-| `start_arrangement_recording` | — | Start arrangement recording |
-| `stop_arrangement_recording` | — | Stop arrangement recording |
-| `set_metronome` | `enabled: bool` | Enable or disable the metronome |
-| `tap_tempo` | — | Tap tempo (call repeatedly to set tempo by tapping) |
-
-### Bulk Track Queries (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_all_tracks_info` | — | Get information about all tracks at once (bulk query) |
-
-### Additional Track Management (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `create_return_track` | — | Create a new return track |
-| `set_track_color` | `track_index: int, color_index: int` | Set track color (0-69, Ableton's palette) |
-| `group_tracks` | `track_indices: list` | Group multiple tracks together |
-
-### Audio Clip Tools (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_audio_clip_info` | `track_index: int, clip_index: int` | Get audio clip details (warp mode, gain, file path) |
-| `analyze_audio_clip` | `track_index: int, clip_index: int` | Comprehensive audio clip analysis (tempo, warp, sample properties, frequency hints) |
-| `set_warp_mode` | `track_index: int, clip_index: int, warp_mode: str` | Set warp mode (beats, tones, texture, re_pitch, complex, complex_pro) |
-| `set_clip_warp` | `track_index: int, clip_index: int, warping_enabled: bool` | Enable or disable warping for an audio clip |
-| `reverse_clip` | `track_index: int, clip_index: int` | Reverse an audio clip |
-| `freeze_track` | `track_index: int` | Freeze a track (render effects in place to reduce CPU load) |
-| `unfreeze_track` | `track_index: int` | Unfreeze a track |
-
-### Arrangement Editing (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_arrangement_clips` | `track_index: int` | Get all clips in arrangement view for a track |
-| `delete_time` | `start_time: float, end_time: float` | Delete a section of time from the arrangement (shifts everything after) |
-| `duplicate_time` | `start_time: float, end_time: float` | Duplicate a section of time in the arrangement |
-| `insert_silence` | `position: float, length: float` | Insert silence at a position (shifts everything after) |
-
-### Arrangement Automation (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `create_track_automation` | `track_index: int, parameter_name: str, automation_points: list` | Create automation for a track parameter (arrangement-level). Points: `[{time, value}, ...]` |
-| `clear_track_automation` | `track_index: int, parameter_name: str, start_time: float, end_time: float` | Clear automation for a parameter in a time range (arrangement-level) |
-
-### MIDI & Performance Tools (v1.9.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `capture_midi` | — | Capture recently played MIDI notes (Live 11+) |
-| `apply_groove` | `track_index: int, clip_index: int, groove_amount: float` | Apply groove to a MIDI clip (0.0-1.0) |
-| `get_macro_values` | `track_index: int, device_index: int` | Get current macro knob values for an Instrument Rack |
-
-### Scenes
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_scenes` | — | Get information about all scenes |
-| `create_scene` | `index: int = -1` | Create a new scene (-1 = end of list) |
-| `set_scene_name` | `scene_index: int, name: str` | Set the name of a scene |
-| `fire_scene` | `scene_index: int` | Fire a scene (launch all clips in that row) |
-| `delete_scene` | `scene_index: int` | Delete a scene |
-
-### Return Tracks
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_return_tracks` | — | Get information about all return tracks |
-| `get_return_track_info` | `return_track_index: int` | Get detailed info about a return track (0=A, 1=B, etc.) |
-| `set_return_track_volume` | `return_track_index: int, volume: float` | Set return track volume (0.0-1.0) |
-| `set_return_track_pan` | `return_track_index: int, pan: float` | Set return track panning |
-| `set_return_track_mute` | `return_track_index: int, mute: bool` | Mute/unmute a return track |
-| `set_return_track_solo` | `return_track_index: int, solo: bool` | Solo/unsolo a return track |
-
-### Master Track
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_master_track_info` | — | Get master track info (volume, pan, devices) |
-| `set_master_volume` | `volume: float` | Set master track volume (0.0-1.0, 0.85 ~ 0dB) |
-
-### Devices & Parameters
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_device_parameters` | `track_index: int, device_index: int` | Get all parameters and values for a device |
-| `set_device_parameter` | `track_index: int, device_index: int, parameter_name: str, value: float` | Set a device parameter by name (clamped to min/max) |
-| `set_device_parameters` | `track_index: int, device_index: int, parameters: str` | Set multiple parameters in one call. `parameters` is a JSON array: `[{"name": "...", "value": 0.5}, ...]` |
-| `delete_device` | `track_index: int, device_index: int` | Delete a device from a track |
-
-### Browser & Loading
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_browser_tree` | `category_type: str = "all"` | Get browser categories (instruments, drums, audio_effects, midi_effects, max_for_live, plugins, user_library) |
-| `get_browser_items_at_path` | `path: str` | Get items at a browser path (e.g. "category/folder/subfolder") |
-| `search_browser` | `query: str, category: str = "all"` | Search the browser for items by name (uses cached index — instant results). Categories: instruments, drums, audio_effects, midi_effects, max_for_live, plugins, user_library |
-| `refresh_browser_cache` | — | Force a full re-scan of Ableton's browser tree (cache auto-refreshes every 5 min) |
-| `load_instrument_or_effect` | `track_index: int, uri: str` | Load an instrument or effect by URI or name (e.g. `"Reverb"`, `"Wavetable"` — auto-resolves to correct URI) |
-| `load_sample` | `track_index: int, sample_uri: str` | Load an audio sample onto a track |
-| `load_drum_kit` | `track_index: int, rack_uri: str, kit_path: str` | Load a drum rack with a specific kit |
-| `get_user_library` | — | Get user library browser tree |
-| `get_user_folders` | — | Get user-configured sample folders (returns browser URIs) |
-
-### M4L Bridge Tools (require Max for Live device)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `m4l_status` | — | Check if the M4L bridge device is loaded and responsive |
-| `discover_device_params` | `track_index: int, device_index: int` | Discover ALL parameters including hidden/non-automatable ones |
-| `get_device_hidden_parameters` | `track_index: int, device_index: int` | Get hidden parameter details (name, value, min, max, quantized) |
-| `set_device_hidden_parameter` | `track_index: int, device_index: int, parameter_index: int, value: float` | Set any parameter by its LOM index |
-| `list_instrument_rack_presets` | — | List Instrument Rack presets in user library (VST/AU workaround) |
-| `batch_set_hidden_parameters` | `track_index: int, device_index: int, parameters: list` | Set multiple hidden parameters in one call. Each entry: `{index, value}` |
-
-### Device Chain Navigation (v2.0.0, requires M4L)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `discover_rack_chains` | `track_index: int, device_index: int, chain_path?: str` | Discover chains, nested devices, and drum pads inside Instrument/Audio Effect/Drum Racks. Use `chain_path` (e.g. `"chains 0 devices 0"`) to target nested racks |
-| `get_chain_device_parameters` | `track_index: int, device_index: int, chain_index: int, chain_device_index: int` | Get all parameters of a device nested inside a rack chain |
-| `set_chain_device_parameter` | `track_index: int, device_index: int, chain_index: int, chain_device_index: int, parameter_index: int, value: float` | Set a parameter on a device nested inside a rack chain |
-
-### Simpler / Sample Deep Access (v2.0.0, requires M4L)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_simpler_info` | `track_index: int, device_index: int` | Get Simpler device info: playback mode, sample file, markers, warp settings, slices |
-| `set_simpler_sample_properties` | `track_index: int, device_index: int, ...` | Set sample properties: start/end markers, warping, warp mode, gain, slicing sensitivity |
-| `simpler_manage_slices` | `track_index: int, device_index: int, action: str, slice_time?: float` | Manage slices: insert, remove, clear, or reset to auto-detected positions |
-
-### Wavetable Modulation Matrix (v2.0.0, requires M4L)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `get_wavetable_info` | `track_index: int, device_index: int` | Get Wavetable device state: oscillator wavetables, modulation matrix, unison, filter routing |
-| `set_wavetable_modulation` | `track_index: int, device_index: int, target_index: int, source_index: int, amount: float` | Set modulation amount in Wavetable's mod matrix. Sources: 0=Env2, 1=Env3, 2=LFO1, 3=LFO2 |
-| `set_wavetable_properties` | `track_index: int, device_index: int, ...` | Set Wavetable oscillator wavetable category/index and effect modes. Voice/unison/filter properties are read-only (see Limitations) |
-
-### Snapshot & Versioning (v1.6.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `snapshot_device_state` | `track_index: int, device_index: int, snapshot_name: str` | Capture complete device state (all params) into a named snapshot |
-| `restore_device_snapshot` | `snapshot_id: str, track_index?: int, device_index?: int` | Restore a saved snapshot (optionally to a different device) |
-| `list_snapshots` | — | List all stored snapshots with IDs, names, and timestamps |
-| `get_snapshot_details` | `snapshot_id: str` | Show full parameter values of a snapshot |
-| `delete_snapshot` | `snapshot_id: str` | Delete a snapshot |
-| `delete_all_snapshots` | — | Clear all snapshots, macros, and parameter maps |
-| `snapshot_all_devices` | `track_indices: list, snapshot_name: str` | Snapshot every device across multiple tracks as a group |
-| `restore_group_snapshot` | `group_id: str` | Restore all devices from a group snapshot |
-| `compare_snapshots` | `snapshot_a_id: str, snapshot_b_id: str` | Diff two snapshots — show changed parameters with deltas |
-
-### Preset Morph Engine (v1.6.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `morph_between_snapshots` | `snapshot_a_id: str, snapshot_b_id: str, position: float` | Interpolate between two snapshots (0.0=A, 1.0=B). Quantized params snap at midpoint |
-
-### Smart Macro Controller (v1.6.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `create_macro_controller` | `name: str, mappings: list` | Create a macro linking multiple params. Each mapping: `{track_index, device_index, parameter_index, min_value, max_value}` |
-| `set_macro_value` | `macro_id: str, value: float` | Set macro 0.0-1.0, interpolating all linked params via batch set |
-| `list_macros` | — | List all macro controllers |
-| `delete_macro` | `macro_id: str` | Delete a macro controller |
-
-### Intelligent Preset Generator (v1.6.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `generate_preset` | `track_index: int, device_index: int, description: str, variation_count: int` | Discover all params, auto-snapshot current state, return param list for AI-driven preset creation |
-
-### VST/AU Parameter Mapper (v1.6.0)
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `create_parameter_map` | `track_index: int, device_index: int, friendly_names: list` | Map cryptic param names to friendly names with categories |
-| `get_parameter_map` | `map_id: str` | Retrieve a stored parameter map |
-| `list_parameter_maps` | — | List all parameter maps |
-| `delete_parameter_map` | `map_id: str` | Delete a parameter map |
-
----
-
-## Communication Protocols
-
-### TCP Protocol (Remote Script <-> MCP Server)
-
-Port **9877**, length-prefixed JSON messages.
-
-**Request format:**
-```json
-{
-  "type": "command_name",
-  "params": { "key": "value" }
-}
-```
-
-**Response format:**
-```json
-{
-  "status": "success",
-  "result": { ... }
-}
-```
-
-Messages are framed with a 4-byte big-endian length prefix to prevent TCP stream corruption. Both sides use `struct.pack(">I", len(data))` for framing.
-
-### OSC/UDP Protocol (M4L Bridge <-> MCP Server)
+## Tool Reference (138 Tools)
 
-The MCP server sends native OSC messages to port **9878** (M4L `udpreceive`). The M4L bridge responds with base64-encoded JSON via `udpsend` to port **9879**.
-
-**OSC Commands:**
+### Session & Transport (7)
+`get_session_info` `set_tempo` `start_playback` `stop_playback` `get_song_transport` `set_song_time` `set_song_loop`
 
-| Address | Arguments | Description |
-|---|---|---|
-| `/ping` | `request_id` | Health check — returns bridge version |
-| `/discover_params` | `track_index, device_index, request_id` | Enumerate all LOM parameters |
-| `/get_hidden_params` | `track_index, device_index, request_id` | Get hidden parameter details |
-| `/set_hidden_param` | `track_index, device_index, param_index, value, request_id` | Set a parameter by LOM index |
-| `/batch_set_hidden_params` | `track_index, device_index, params_b64, request_id` | Set multiple params at once (chunked). `params_b64` is URL-safe base64-encoded JSON: `[{index, value}, ...]`. Note: v1.8.2+ server uses sequential `/set_hidden_param` calls instead for reliability. |
-| `/check_dashboard` | `request_id` | Returns the dashboard URL and bridge version |
-| `/discover_chains` | `track_index, device_index, [extra_path], request_id` | Discover rack chains, nested devices, and drum pads. Optional `extra_path` for nested racks (v2.0.0) |
-| `/get_chain_device_params` | `track_index, device_index, chain_index, chain_device_index, request_id` | Get all params for a device inside a chain (v2.0.0) |
-| `/set_chain_device_param` | `track_index, device_index, chain_index, chain_device_index, param_index, value, request_id` | Set a param on a nested device (v2.0.0) |
-| `/get_simpler_info` | `track_index, device_index, request_id` | Get Simpler device and sample info (v2.0.0) |
-| `/set_simpler_sample_props` | `track_index, device_index, props_b64, request_id` | Set sample properties (v2.0.0) |
-| `/simpler_slice` | `track_index, device_index, action, [slice_time], request_id` | Manage slices (insert/remove/clear/reset) (v2.0.0) |
-| `/get_wavetable_info` | `track_index, device_index, request_id` | Get Wavetable device state and mod matrix (v2.0.0) |
-| `/set_wavetable_modulation` | `track_index, device_index, target_index, source_index, amount, request_id` | Set modulation amount in Wavetable mod matrix (v2.0.0) |
-| `/set_wavetable_props` | `track_index, device_index, props_b64, request_id` | Set Wavetable device properties (v2.0.0) |
+### Track Management (10)
+`get_track_info` `create_midi_track` `create_audio_track` `set_track_name` `delete_track` `duplicate_track` `get_all_tracks_info` `create_return_track` `set_track_color` `group_tracks`
 
-**Why base64?** Max treats `{` and `}` as special characters in its messaging system, so JSON responses are base64-encoded before being sent through `outlet()`.
+### Track Mixing (6)
+`set_track_volume` `set_track_pan` `set_track_mute` `set_track_solo` `set_track_arm` `set_track_send`
 
----
+### Clip Management (14)
+`create_clip` `get_clip_info` `set_clip_name` `delete_clip` `duplicate_clip` `fire_clip` `stop_clip` `set_clip_looping` `set_clip_loop_points` `set_clip_color` `crop_clip` `duplicate_clip_loop` `set_clip_start_end` `duplicate_clip_to_arrangement`
 
-## Max for Live Bridge Implementation
+### MIDI Notes (8)
+`add_notes_to_clip` `get_clip_notes` `clear_clip_notes` `quantize_clip_notes` `transpose_clip_notes` `add_notes_extended` `get_notes_extended` `remove_notes_range`
 
-The M4L bridge (`m4l_bridge.js`) is a JavaScript file running in a Max `[js]` object. It provides access to the Live Object Model (LOM), which exposes parameters that the standard Remote Script API hides.
+### Automation (4)
+`create_clip_automation` `get_clip_automation` `clear_clip_automation` `list_clip_automated_parameters`
 
-### Max Patch Structure
+### ASCII Grid Notation (2)
+`clip_to_grid` `grid_to_clip` — visual drum/melodic pattern editing
 
-```
-[udpreceive 9878] --> [js m4l_bridge.js] --> [udpsend localhost 9879]
-```
+### Transport & Recording (11)
+`get_loop_info` `get_recording_status` `set_loop_start` `set_loop_end` `set_loop_length` `set_playback_position` `set_arrangement_overdub` `start_arrangement_recording` `stop_arrangement_recording` `set_metronome` `tap_tempo`
 
-### How It Works
+### Arrangement Editing (7)
+`get_arrangement_clips` `delete_time` `duplicate_time` `insert_silence` `duplicate_clip_to_arrangement` `create_track_automation` `clear_track_automation`
 
-1. **OSC Routing**: Max's `udpreceive` parses incoming OSC packets. The OSC address (e.g. `/ping`) becomes the `messagename` in the `anything()` function. A `switch` statement routes to the appropriate handler.
+### Audio Clips (7)
+`get_audio_clip_info` `analyze_audio_clip` `set_warp_mode` `set_clip_warp` `reverse_clip` `freeze_track` `unfreeze_track`
 
-2. **LOM Access**: Uses Max's `LiveAPI` to access the Live Object Model:
-   ```javascript
-   var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
-   var deviceApi = new LiveAPI(null, devicePath);
-   ```
+### MIDI & Performance (3)
+`capture_midi` `apply_groove` `get_macro_values`
 
-3. **Parameter Discovery**: Iterates all parameters on a device via `getcount("parameters")`, reading each parameter's `name`, `value`, `min`, `max`, `is_quantized`, `default_value`, and `value_items`.
+### Scenes (5)
+`get_scenes` `create_scene` `set_scene_name` `fire_scene` `delete_scene`
 
-3b. **LiveAPI Cursor Reuse**: Chain/drum pad discovery uses `LiveAPI.goto()` to navigate a reusable cursor object instead of creating `new LiveAPI()` per iteration. This keeps the total LiveAPI object count at 3 (vs ~193 for a 16-pad drum rack), preventing Max's `[js]` engine from running out of object handles.
-
-4. **Parameter Setting**: Sets any parameter by its LOM index, with value clamping:
-   ```javascript
-   var clamped = Math.max(minVal, Math.min(maxVal, value));
-   paramApi.set("value", clamped);
-   ```
+### Return Tracks (6)
+`get_return_tracks` `get_return_track_info` `set_return_track_volume` `set_return_track_pan` `set_return_track_mute` `set_return_track_solo`
 
-5. **Response Encoding**: All responses are JSON-stringified, then base64-encoded (Max's JS engine lacks `btoa`, so a custom encoder is included), and sent via `outlet(0, encoded)`.
-
-### Setup
-
-1. Requires Ableton Live **Suite** or **Standard + Max for Live**
-2. Create a new Max MIDI Effect
-3. Build the patch: `[udpreceive 9878] -> [js m4l_bridge.js] -> [udpsend localhost 9879]`
-4. Copy `M4L_Device/m4l_bridge.js` to the device's folder
-5. Save the device and load it on any track
-6. See [`M4L_Device/README.md`](M4L_Device/README.md) for detailed instructions
-
----
-
-## Remote Script Implementation Details
-
-The Remote Script (`AbletonMCP_Remote_Script/__init__.py`) is a `ControlSurface` subclass that:
-
-- **Socket Server**: Runs a TCP server on port 9877 in a background thread. Each connected client gets its own handler thread.
-- **Command Dispatch**: Incoming JSON commands are dispatched to handler methods via a type-to-function mapping (e.g. `"get_session_info"` -> `_get_session_info()`).
-- **Thread Safety**: Commands that need the Live API are scheduled on the main thread using `schedule_message()`, since Ableton's API is not thread-safe.
-- **Live 11/12 Compatibility**: Note operations use `remove_notes_extended()` with fallback to legacy `remove_notes()`. Quantize uses the built-in `clip.quantize()` API when available.
-- **Group Track Support**: `get_track_info` safely handles group tracks by wrapping `arm`, `is_foldable`, `has_audio_input`, `has_midi_input` in try/except blocks, since group tracks don't support all track properties.
-
----
-
-## v2.0.0 Feature Systems
-
-### Device Chain Navigation (NEW — requires M4L)
-Navigate inside Instrument Racks, Audio Effect Racks, and Drum Racks. Discover chains and nested devices, read/write parameters on devices that are invisible to the top-level Remote Script API. For Drum Racks, enumerate populated pads by MIDI note number.
-
-### Simpler / Sample Deep Access (NEW — requires M4L)
-Read and control Simpler's loaded sample properties: start/end markers, warp mode, gain, slicing sensitivity. Manage slices programmatically (insert, remove, clear, reset). Access warp-mode-specific properties (beats granulation, texture flux, complex pro formants, etc.).
-
-### Wavetable Modulation Matrix (NEW — requires M4L)
-Read and control Wavetable's modulation matrix: set modulation amounts from any source (Env2, Env3, LFO1, LFO2) to any target parameter. Change oscillator wavetable selections and effect modes via M4L. Voice/unison/filter properties (unison mode, unison voices, filter routing, mono/poly, poly voices) can be read via `get_wavetable_info` but are read-only — not exposed as DeviceParameters (see Limitations).
-
-### Full Automation Support (v1.8.0+)
-**Clip automation**: Create, read, clear, and discover automation on any automatable parameter (Volume, Pan, Sends, device parameters) on both MIDI and audio clips. Tools: `create_clip_automation`, `get_clip_automation`, `clear_clip_automation`, `list_clip_automated_parameters`.
-**Arrangement automation**: Create and clear track-level automation in arrangement view via `create_track_automation` and `clear_track_automation`. Supports Volume, Pan, Sends, and all device parameters.
-
-### Advanced MIDI Note Editing (v1.8.0+, Live 11+)
-Extended note properties: **probability** (0.0–1.0 trigger chance), **velocity_deviation** (random velocity range), and **release_velocity**. Use `add_notes_extended` and `get_notes_extended`. Selectively remove notes by time/pitch range with `remove_notes_range`. Falls back gracefully to legacy APIs on Live 10.
-
-### Intelligent Preset Generator
-Discover all device parameters, then Claude intelligently sets values based on text descriptions like "bright bass", "warm pad", or "aggressive lead". Auto-snapshots current state for easy revert. **v2.0.0**: Now uses TCP (no M4L needed).
-
-### Smart Macro Controller
-Link multiple parameters across devices to a single 0.0-1.0 "super-knob". When the macro moves, all linked parameters interpolate proportionally. Supports cross-device, cross-track linking. **v2.0.0**: Now uses TCP (no M4L needed).
-
-### VST/AU Parameter Mapper
-Scan third-party plugins, discover their hidden parameters, and create custom control surfaces with human-readable names organized by category.
-
-### Preset Morph Engine
-Capture two different device states as snapshots, then smoothly morph between them at any position. Continuous parameters interpolate linearly; quantized parameters (waveform selectors) snap at the midpoint. **v2.0.0**: Now uses TCP (no M4L needed).
-
-### Device State Versioning & Undo
-Snapshot every device on your tracks, then rollback to any previous state. Group snapshots capture multiple tracks at once. Compare any two snapshots to see exactly what changed. **v2.0.0**: Now uses TCP (no M4L needed).
-
-### Web Status Dashboard
-Live web dashboard at `http://127.0.0.1:9880` showing connection status, tool call metrics, and a real-time server log. Runs automatically on startup — just open your browser.
-
-### Auto M4L Bridge Connection
-The server now automatically connects to the M4L bridge device on startup, right after connecting to Ableton. No need to wait for a tool call to trigger the connection — the dashboard shows M4L status immediately.
-
-### Cached Browser Tree (v1.9.0+)
-The server scans Ableton's browser tree and caches results both in memory and on disk. This eliminates the slow, recursive browser queries that previously caused timeouts.
-
-- **Disk persistence**: cache is saved to `~/.ableton-mcp/browser_cache.json` after each scan. On next startup, loaded **instantly** (~50ms) — search and device loading work immediately, no waiting
-- **Background refresh**: 5 seconds after boot, a daemon thread BFS-walks 7 browser categories (Instruments, Drums, Audio Effects, MIDI Effects, Max for Live, Plug-ins, User Library) up to **depth 3** with rate limiting (50ms between commands)
-- **Dynamic device URI map**: 5,118 device names auto-mapped to URIs — say `"load Reverb"` and it resolves to `query:AudioFx#Reverb` instantly
-- **Cache size**: up to **1,500 items per category**, auto-refreshes every **5 minutes**, disk cache valid for **24 hours**
-- `search_browser` queries the local cache — **instant results, no more timeouts**
-- `refresh_browser_cache` forces a full re-scan and saves to disk
-- **Singleton guard**: exclusive TCP port lock prevents duplicate server instances from fighting
-
-### v2.0.0 — M4L Bridge v2 & Deep Device Access (9 New Tools)
-
-- **Device chain navigation**: `discover_rack_chains`, `get_chain_device_parameters`, `set_chain_device_parameter` — navigate inside Instrument Racks, Audio Effect Racks, and Drum Racks to read/write nested device parameters
-- **Simpler/Sample deep access**: `get_simpler_info`, `set_simpler_sample_properties`, `simpler_manage_slices` — read/write sample markers, warp settings, slicing; insert/remove/clear slices programmatically
-- **Wavetable modulation matrix**: `get_wavetable_info`, `set_wavetable_modulation`, `set_wavetable_properties` — control modulation matrix (Env2/Env3/LFO1/LFO2 → any target), oscillator wavetable selection, unison, filter routing
-- **M4L bridge v2.0.0**: 9 new OSC commands for chain navigation, Simpler/Sample, and Wavetable control
-- **TCP port for snapshots**: `snapshot_device_state`, `restore_device_snapshot`, `snapshot_all_devices`, `restore_group_snapshot`, `morph_between_snapshots`, `set_macro_value` all ported from M4L to TCP — no longer crash-prone, no longer require M4L bridge
-- **`generate_preset` ported to TCP**: No longer uses M4L for parameter discovery — eliminates timeout/crash when generating presets
-- **Removed redundant tools**: `arm_track`, `disarm_track`, `get_return_tracks_info` (use `set_track_arm` and `get_return_tracks` instead)
-- **Reduced bruteforce resolver logging**: No longer floods Ableton's log during display value resolution
-- Total tools: 132 -> **138** (+9 new, -3 removed)
-
-### v1.9.1 — Browser Cache Overhaul & Batch Parameters
-
-- **Disk browser cache**: scan results persisted to `~/.ableton-mcp/browser_cache.json` — instant startup after first scan
-- **Dynamic device URI map**: 5,118+ device names auto-resolved to correct URIs — no more `search_browser` before loading
-- **Batch parameter setting**: `set_device_parameters` sets 20+ parameters in a single call — 10x faster sound design
-- **Singleton guard**: prevents duplicate server instances from fighting via exclusive port lock
-- **Expanded browser categories**: 7 categories including Max for Live, Plug-ins, User Library
-- **Connection stability**: rate limiting, reconnect resilience, longer timeouts for browser scan
-- Total tools: 131 -> **132** (+1 new tool)
-
-### v1.9.0 — Major Expansion (37 New Tools)
-
-- **Cached Browser Tree**: `search_browser` uses in-memory BFS cache — instant results, no more timeouts
-- **ASCII Grid Notation**: `clip_to_grid` / `grid_to_clip` for visual drum/melodic pattern editing
-- **Transport & Recording**: Full transport control — loop info, recording, overdub, metronome, tap tempo, playback position
-- **Bulk Queries**: `get_all_tracks_info` / `get_return_tracks_info` for fast session overview
-- **Track Management**: `create_return_track`, `set_track_color`, `group_tracks`
-- **Audio Clip Tools**: Warp mode, clip analysis, reverse, freeze/unfreeze tracks
-- **Arrangement Editing**: `get_arrangement_clips`, `delete_time`, `duplicate_time`, `insert_silence`
-- **Arrangement Automation**: `create_track_automation`, `clear_track_automation`
-- **MIDI & Performance**: `capture_midi`, `apply_groove`, `get_macro_values`
-- Total tools: 94 -> **131** (+37 new tools)
-
-### v1.8.2 — Batch Hidden Parameter Crash Fix
-
-- **Fixed**: `batch_set_hidden_parameters` was crashing Ableton when setting more than 2 parameters. Root cause: Max's OSC/UDP handling corrupted long base64-encoded payloads.
-- **Server fix**: Replaced single base64-encoded batch OSC message with sequential individual `set_hidden_param` calls via `_m4l_batch_set_params()` helper. Includes 50ms inter-param delay for large batches.
-- **M4L fix**: Added chunked processing (6 params/chunk, 50ms delay) using Max's `Task` scheduler, URL-safe base64 decode, debug logging.
-- **Safety**: Both server and M4L bridge filter out parameter index 0 ("Device On") to prevent accidentally disabling devices.
-- **Dynamic timeout**: M4L `send_command` timeout scales with parameter count (~150ms/param, min 10s) instead of fixed 5s.
-- Updated all internal callers: `restore_device_snapshot`, `restore_group_snapshot`, `morph_between_snapshots`, `set_macro_value`.
-
-### v1.8.1 — Stability & Hidden Parameter Crash Fix
-
-- **Fixed**: `set_device_hidden_parameter` no longer crashes Ableton — added try-catch around LOM parameter set/get calls in the M4L bridge JS (matching the batch handler pattern)
-- **Fixed**: Proper `socket.shutdown()` before `close()` on disconnect — prevents socket hangs and FD leaks
-- **Fixed**: Buffer overflow now notifies client with error message before disconnecting (was silent drop)
-- **Fixed**: UTF-8 decode uses `errors='replace'` — invalid bytes no longer crash the client handler
-- **Fixed**: M4L response `request_id` verification — warns on mismatch to detect stale responses
-- **Improved**: Thread join timeout on disconnect increased from 1s to 3s for cleaner shutdown
-
-### v1.8.0 — Arrangement View & Advanced Editing
-
-#### Arrangement View Workflow
-Build clips in session view, then place them on the arrangement timeline with `duplicate_clip_to_arrangement`. Control the arrangement playhead (`set_song_time`), loop bracket (`set_song_loop`), and read full transport state (`get_song_transport`). While Ableton's API doesn't allow direct arrangement clip editing, this session-to-arrangement workflow is the supported path.
-
-#### Advanced Clip Operations
-`crop_clip` trims a clip to its loop region. `duplicate_clip_loop` doubles the loop content. `set_clip_start_end` controls playback start/end markers without modifying notes.
-
-#### Advanced MIDI Note Editing (Live 11+)
-`add_notes_extended` and `get_notes_extended` support Live 11+ note properties: **probability** (0.0-1.0 trigger chance), **velocity_deviation** (random velocity range), and **release_velocity**. Falls back gracefully to legacy APIs on older Live versions. `remove_notes_range` allows selective note removal by time and pitch range.
-
-#### Automation Reading & Editing
-Automation is no longer write-only. `get_clip_automation` reads existing envelope data by sampling 64 points across the clip. `list_clip_automated_parameters` discovers all automated parameters in a clip (mixer, sends, device params). `clear_clip_automation` removes automation for a specific parameter.
+### Master Track (2)
+`get_master_track_info` `set_master_volume`
+
+### Devices & Parameters (4)
+`get_device_parameters` `set_device_parameter` `set_device_parameters` `delete_device`
+
+### Browser & Loading (9)
+`get_browser_tree` `get_browser_items_at_path` `search_browser` `refresh_browser_cache` `load_instrument_or_effect` `load_sample` `load_drum_kit` `get_user_library` `get_user_folders`
+
+### Snapshot & Versioning (9)
+`snapshot_device_state` `restore_device_snapshot` `list_snapshots` `get_snapshot_details` `delete_snapshot` `delete_all_snapshots` `snapshot_all_devices` `restore_group_snapshot` `compare_snapshots`
+
+### Preset Morph (1)
+`morph_between_snapshots` — interpolate between two device states (0.0=A, 1.0=B)
+
+### Smart Macros (4)
+`create_macro_controller` `set_macro_value` `list_macros` `delete_macro`
+
+### Preset Generator (1)
+`generate_preset` — AI-driven preset creation from text descriptions
+
+### Parameter Mapper (4)
+`create_parameter_map` `get_parameter_map` `list_parameter_maps` `delete_parameter_map`
+
+### Rack Presets (1)
+`list_instrument_rack_presets`
+
+### M4L: Hidden Parameters (6) *requires M4L device*
+`m4l_status` `discover_device_params` `get_device_hidden_parameters` `set_device_hidden_parameter` `batch_set_hidden_parameters` `list_instrument_rack_presets`
+
+### M4L: Device Chain Navigation (3) *requires M4L device*
+`discover_rack_chains` `get_chain_device_parameters` `set_chain_device_parameter`
+
+### M4L: Simpler / Sample Access (3) *requires M4L device*
+`get_simpler_info` `set_simpler_sample_properties` `simpler_manage_slices`
+
+### M4L: Wavetable Modulation (3) *requires M4L device*
+`get_wavetable_info` `set_wavetable_modulation` `set_wavetable_properties`
 
 ---
 
@@ -577,7 +112,6 @@ Automation is no longer write-only. `get_clip_automation` reads existing envelop
 - Python 3.10+
 - [uv package manager](https://astral.sh/uv)
 
-Install uv:
 ```bash
 # macOS
 brew install uv
@@ -592,7 +126,7 @@ Add to `claude_desktop_config.json`:
 ```json
 {
     "mcpServers": {
-        "AbletonMCP-Beta": {
+        "AbletonMCP": {
             "command": "uv",
             "args": ["run", "--directory", "C:\\path\\to\\ableton-mcp-stable", "ableton-mcp-stable"]
         }
@@ -600,36 +134,25 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-Replace `C:\\path\\to\\ableton-mcp-stable` with the actual path to your cloned/downloaded repo.
-
-After starting, the web dashboard is available at `http://127.0.0.1:9880`.
-
 ### Cursor Integration
 
-Go to Cursor Settings > MCP and add a new server with the command:
+Go to Cursor Settings > MCP and add:
 ```
 uv run --directory C:\path\to\ableton-mcp-stable ableton-mcp-stable
 ```
 
-Only run one instance of the MCP server (either Cursor or Claude Desktop), not both.
+Only run one instance (either Cursor or Claude Desktop, not both).
 
 ### Installing the Remote Script
 
-1. Copy the `AbletonMCP_Remote_Script` folder to Ableton's MIDI Remote Scripts directory:
+1. Copy `AbletonMCP_Remote_Script` to Ableton's MIDI Remote Scripts:
+   - **macOS:** `/Users/[You]/Library/Preferences/Ableton/Live XX/User Remote Scripts`
+   - **Windows:** `C:\Users\[You]\AppData\Roaming\Ableton\Live x.x.x\Preferences\User Remote Scripts`
+2. In Ableton: Settings > Link, Tempo & MIDI > Control Surface > **AbletonMCP** > Input/Output: None
 
-   **macOS:**
-   - `Contents/App-Resources/MIDI Remote Scripts/` (right-click Ableton app -> Show Package Contents)
-   - `/Users/[Username]/Library/Preferences/Ableton/Live XX/User Remote Scripts`
+### M4L Bridge Setup (Optional)
 
-   **Windows:**
-   - `C:\Users\[Username]\AppData\Roaming\Ableton\Live x.x.x\Preferences\User Remote Scripts`
-   - `C:\ProgramData\Ableton\Live XX\Resources\MIDI Remote Scripts\`
-   - `C:\Program Files\Ableton\Live XX\Resources\MIDI Remote Scripts\`
-
-2. Launch Ableton Live
-3. Go to Settings/Preferences -> Link, Tempo & MIDI
-4. In the Control Surface dropdown, select **AbletonMCP** (or **AbletonMCP_Remote_Script**)
-5. Set Input and Output to **None**
+See [`M4L_Device/README.md`](M4L_Device/README.md) for Max for Live bridge setup instructions.
 
 ### Building from Source
 
@@ -637,41 +160,25 @@ Only run one instance of the MCP server (either Cursor or Claude Desktop), not b
 uv build
 ```
 
-This generates a `.whl` package in `dist/`. After rebuilding, restart the MCP server for changes to take effect. Remember to also delete `__pycache__/__init__.cpython-*.pyc` in the Ableton Remote Scripts folder when updating the Remote Script.
-
----
-
-## Example Commands
-
-- "Create an 80s synthwave track"
-- "Create a Metro Boomin style hip-hop beat"
-- "Create a new MIDI track with a synth bass instrument"
-- "Add reverb to my drums"
-- "Create a 4-bar MIDI clip with a simple melody"
-- "Load a 808 drum rack into the selected track"
-- "Add a jazz chord progression to the clip in track 1"
-- "Set the tempo to 120 BPM"
-
 ---
 
 ## Limitations
 
-- **VST/AU plugins** cannot be loaded directly (Ableton API limitation) — save as Instrument Rack preset first, then use `list_instrument_rack_presets` + `load_instrument_or_effect`. Built-in Ableton devices can be loaded by name (e.g. `"Wavetable"`, `"Reverb"`) — auto-resolved via browser cache
-- **Arrangement clips** are read-only after placement — edit clips in session view, then place on the timeline with `duplicate_clip_to_arrangement`. Use `get_arrangement_clips` to read, and `delete_time` / `duplicate_time` / `insert_silence` for structural edits
-- **Wavetable voice properties**: `unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices` can be **read** via `get_wavetable_info` but are **read-only** — not exposed as DeviceParameters (verified against full 93-parameter list) and `LiveAPI.set()` silently fails. Oscillator properties (wavetable category/index, effect modes) work reliably. Change voice/unison/filter settings manually in Ableton's GUI
-- **Large sessions**: For best results, break arrangement tasks into smaller tool calls (e.g. place clips first, then add automation, then adjust mixing)
+- **VST/AU plugins** can't be loaded directly (Ableton API limitation) — save as Instrument Rack preset first. Built-in devices load by name (`"Wavetable"`, `"Reverb"`)
+- **Arrangement clips** are read-only after placement — edit in session view, place with `duplicate_clip_to_arrangement`
+- **Wavetable voice properties** (`unison_mode`, `poly_voices`, `filter_routing`, etc.) are read-only — not exposed as DeviceParameters
+- **Large sessions**: Break complex tasks into smaller tool calls for best results
 
 ## Troubleshooting
 
-- **Connection issues**: Make sure the Remote Script is loaded in Ableton and the MCP server is configured
-- **Timeout errors**: Simplify requests or break them into smaller steps
-- **Changes not taking effect**: If you edited source code, rebuild the `.whl` with `uv build` — the MCP server runs from the packaged wheel, not source files
-- **Remote Script not updating**: Delete `__pycache__/__init__.cpython-*.pyc` in the Ableton MIDI Remote Scripts folder, then reload the control surface
-- **Multiple server instances**: The server now has a singleton guard (port 9881) — a second instance will exit automatically. If the port is stuck, set `ABLETON_MCP_LOCK_PORT` env var
-- **Dashboard not loading**: Make sure Claude Desktop is running the latest wheel (check `claude_desktop_config.json`). Restart Claude Desktop after rebuilding. If port 9880 is in use, set `ABLETON_MCP_DASHBOARD_PORT` env var
-- **M4L bridge not responding**: Reload the `[js]` object in the M4L device (click the `[js m4l_bridge.js]` box in the Max patch). If that fails, remove and re-add the M4L device to a track
-- **Batch parameter operations slow**: Large batch operations (>10 parameters) use chunking with 50ms delays for stability — expect ~150ms per parameter. This prevents Ableton crashes during heavy parameter writes
-- **Save your work**: Always save your Live Set before extensive AI-driven experimentation — parameter changes and device loading cannot be undone via Ctrl+Z in all cases
+- **Connection issues**: Ensure Remote Script is loaded and MCP server is running
+- **Timeout errors**: Break requests into smaller steps
+- **Changes not applied**: Rebuild with `uv build`, restart MCP server
+- **Remote Script stale**: Delete `__pycache__/*.pyc` in the Remote Scripts folder
+- **Duplicate instances**: Singleton guard on port 9881 prevents conflicts. Set `ABLETON_MCP_LOCK_PORT` env var if stuck
+- **Dashboard not loading**: Check `claude_desktop_config.json` path. Set `ABLETON_MCP_DASHBOARD_PORT` if port 9880 is in use
+- **M4L not responding**: Reload the `[js]` object in the Max patch, or remove/re-add the M4L device
+- **Save your work**: Always save your Live Set before AI-driven experimentation
 
 ## Disclaimer
 
