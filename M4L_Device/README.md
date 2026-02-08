@@ -1,8 +1,8 @@
 # AbletonMCP Max for Live Bridge (v2.0.0)
 
-This Max for Live (M4L) device provides **optional** deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. When loaded, it enables:
+Optional deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. Adds **10 tools** for:
 
-- Access to hidden/non-automatable parameters on all Ableton devices
+- Hidden/non-automatable parameters on any Ableton device
 - Device chain navigation inside Instrument Racks, Audio Effect Racks, and Drum Racks
 - Simpler/Sample deep access (markers, warp settings, slices)
 - Wavetable modulation matrix control
@@ -11,25 +11,21 @@ This Max for Live (M4L) device provides **optional** deep Live Object Model (LOM
 
 | Capability | Without M4L | With M4L |
 |---|---|---|
-| Public device parameters | Yes (via Remote Script) | Yes |
+| Public device parameters | Yes | Yes |
 | Hidden/non-automatable parameters | No | **Yes** |
-| Rack chain navigation | No | **Yes** (nested device read/write) |
-| Simpler sample control | Basic (via Remote Script) | **Deep** (markers, slices, warp) |
-| Wavetable modulation matrix | No | **Yes** (mod sources → targets) |
-| Snapshots/Morph/Macros | Yes (via TCP since v2.0.0) | Yes |
-| All existing MCP tools | Yes | Yes (unchanged) |
+| Rack chain navigation | No | **Yes** |
+| Simpler sample control | Basic | **Deep** (markers, slices, warp) |
+| Wavetable modulation matrix | No | **Yes** |
 
 ## How It Works
 
-The M4L bridge communicates with the MCP server over **native OSC messages** via UDP, running alongside the existing Remote Script on a separate channel:
-
 ```
 MCP Server
-  ├── TCP :9877 → Remote Script (existing)
-  └── UDP :9878 / :9879 → M4L Bridge (this device, OSC protocol)
+  ├── TCP :9877 → Remote Script (128 tools)
+  └── UDP :9878 / :9879 → M4L Bridge (10 tools, OSC protocol)
 ```
 
-The server sends OSC commands with typed arguments (int, float, string). The M4L device's JavaScript processes them via the Live Object Model and returns base64-encoded JSON responses.
+The server sends OSC commands with typed arguments. The M4L device processes them via the Live Object Model and returns URL-safe base64-encoded JSON responses. Large responses (>1.5KB) are automatically chunked into ~3.6KB UDP packets and reassembled by the server.
 
 ## Setup Instructions
 
@@ -169,15 +165,28 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 
 ## Technical Notes
 
-- Communication uses **native OSC messages** over UDP — the MCP server builds OSC packets with typed arguments (int, float, string) and the M4L device parses them via Max's built-in OSC support
-- Responses are **base64-encoded JSON** sent back through `udpsend` to avoid issues with Max's message system (which treats curly braces `{}` as special characters)
-- The bridge is **device-agnostic** — it works with any Ableton instrument or effect, not just specific ones
-- Parameter indices from the LOM may differ between Ableton Live versions — always use `discover_device_params` first
-- The bridge does not interfere with the Remote Script — both run simultaneously on separate ports
-- **v2.0.0**: Chain navigation uses `LiveAPI` with paths like `live_set tracks T devices D chains C devices CD` for nested access
-- **v2.0.0**: Chain discovery uses `LiveAPI.goto()` to reuse cursor objects instead of creating `new LiveAPI()` per iteration — keeps total at 3 objects vs ~193 for a 16-pad drum rack, preventing Max `[js]` memory exhaustion
-- **v2.0.0**: `discover_rack_chains` accepts optional `chain_path` (e.g. `"chains 0 devices 0"`) to navigate into nested racks
-- **v2.0.0**: Simpler sample access uses path `live_set tracks T devices D sample` for LOM Sample object
-- **v2.0.0**: Wavetable modulation uses `deviceApi.call("get_modulation_value", target, source)` and `set_modulation_value`
-- **v2.0.0**: Wavetable `LiveAPI.set()` works for oscillator properties (category, index, effect_mode) but silently fails for voice/unison/filter properties (`unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices`). These properties are NOT exposed as DeviceParameters either (verified against full 93-parameter list), so TCP `set_device_parameter` cannot write them. This is a confirmed hard Ableton API limitation — these properties are read-only via all available APIs.
-- **v2.0.0**: `setHiddenParam()` uses fire-and-forget `set()` — no post-set `get("value")` readback, which can crash Ableton.
+### Communication
+- **Protocol**: Native OSC messages over UDP. Server builds typed OSC packets; M4L parses via Max's built-in OSC support.
+- **Responses**: URL-safe base64-encoded JSON (`A-Z a-z 0-9 - _` only). Standard base64 `+` and `/` conflict with Max's OSC routing.
+- **Device-agnostic**: Works with any Ableton instrument or effect. Always use `discover_device_params` first — LOM indices may vary between Live versions.
+- **Non-interfering**: Runs alongside the Remote Script on separate UDP ports.
+
+### Chunked Response Protocol (Rev 4)
+Large device discovery (e.g. Wavetable with 93 parameters) produces responses that exceed Max's ~8KB outlet symbol limit and crash Ableton. The bridge handles this automatically:
+
+1. Responses ≤1.5KB JSON are sent directly (backward compatible)
+2. Larger responses are split into 2KB raw JSON pieces
+3. Each piece is base64-encoded independently with URL-safe conversion
+4. Wrapped in a chunk envelope (`{"_c":idx,"_t":total,"_d":"..."}`) and encoded again
+5. All chunks sent via deferred `Task.schedule()` with 50ms delays (~3.6KB each)
+6. Python server detects chunk metadata, buffers, and reassembles
+
+Key safety: never creates the full base64 string in memory; `.replace()` for URL-safe conversion is O(n) native; no synchronous outlet from discovery callbacks.
+
+### Crash Prevention
+- **Chunked async discovery**: Large devices discovered 4 params/chunk with 50ms `Task.schedule()` delays. Prevents synchronous LiveAPI overload (>210 `get()` calls crashes Ableton).
+- **LiveAPI cursor reuse**: `discover_rack_chains` uses `goto()` to reuse 3 cursor objects instead of creating ~193 per call. Prevents Max `[js]` memory exhaustion on large drum racks.
+- **Fire-and-forget writes**: `set_device_hidden_parameter`, `set_chain_device_parameter`, and `set_wavetable_properties` do not read back after `set()`. Post-set `get("value")` readback was the #1 crash pattern.
+
+### Known Limitations
+- **Wavetable voice properties** (`unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices`) are read-only — not exposed as DeviceParameters, and `LiveAPI.set()` silently fails. Hard Ableton API limitation.

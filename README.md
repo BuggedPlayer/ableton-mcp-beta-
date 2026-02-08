@@ -167,4 +167,3 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 ## Version
 
 **v2.0.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
-
