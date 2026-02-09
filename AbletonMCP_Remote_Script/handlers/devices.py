@@ -363,3 +363,207 @@ def set_macro_value(song, track_index, device_index, macro_index, value, ctrl=No
         if ctrl:
             ctrl.log_message("Error setting macro value: " + str(e))
         raise
+
+
+# --- Drum Pad Operations ---
+
+
+def _get_drum_rack(song, track_index, device_index):
+    """Resolve a drum rack device, raising if not found or not a drum rack."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if device_index < 0 or device_index >= len(track.devices):
+        raise IndexError("Device index out of range")
+    device = track.devices[device_index]
+    if not device.can_have_drum_pads:
+        raise Exception("Device '{0}' is not a Drum Rack".format(device.name))
+    return device
+
+
+def get_drum_pads(song, track_index, device_index, ctrl=None):
+    """Get drum pad info from a drum rack device."""
+    try:
+        device = _get_drum_rack(song, track_index, device_index)
+        pads = []
+        for pad in device.drum_pads:
+            pad_info = {
+                "note": pad.note,
+                "name": pad.name,
+                "mute": pad.mute,
+                "solo": pad.solo,
+            }
+            try:
+                pad_info["has_chains"] = len(pad.chains) > 0 if pad.chains else False
+            except Exception:
+                pad_info["has_chains"] = False
+            pads.append(pad_info)
+        return {
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+            "pads": pads,
+            "pad_count": len(pads),
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting drum pads: " + str(e))
+        raise
+
+
+def set_drum_pad(song, track_index, device_index, note, mute=None, solo=None, ctrl=None):
+    """Set mute/solo on a drum pad by MIDI note number."""
+    try:
+        device = _get_drum_rack(song, track_index, device_index)
+        note = int(note)
+        target_pad = None
+        for pad in device.drum_pads:
+            if pad.note == note:
+                target_pad = pad
+                break
+        if target_pad is None:
+            raise ValueError("No drum pad found for MIDI note {0}".format(note))
+        if mute is not None:
+            target_pad.mute = bool(mute)
+        if solo is not None:
+            target_pad.solo = bool(solo)
+        return {
+            "note": target_pad.note,
+            "name": target_pad.name,
+            "mute": target_pad.mute,
+            "solo": target_pad.solo,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting drum pad: " + str(e))
+        raise
+
+
+def copy_drum_pad(song, track_index, device_index, source_note, dest_note, ctrl=None):
+    """Copy drum pad contents from source to destination note."""
+    try:
+        device = _get_drum_rack(song, track_index, device_index)
+        source_note = int(source_note)
+        dest_note = int(dest_note)
+        if not hasattr(device, 'copy_pad'):
+            raise Exception("copy_pad not available in this Live version")
+        device.copy_pad(source_note, dest_note)
+        src_name = ""
+        dst_name = ""
+        for pad in device.drum_pads:
+            if pad.note == source_note:
+                src_name = pad.name
+            if pad.note == dest_note:
+                dst_name = pad.name
+        return {
+            "source_note": source_note,
+            "source_name": src_name,
+            "dest_note": dest_note,
+            "dest_name": dst_name,
+            "copied": True,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error copying drum pad: " + str(e))
+        raise
+
+
+# --- Rack Macro Variations ---
+
+
+def _get_rack_device(song, track_index, device_index):
+    """Resolve a rack device, raising if not a rack."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if device_index < 0 or device_index >= len(track.devices):
+        raise IndexError("Device index out of range")
+    device = track.devices[device_index]
+    if not device.can_have_chains:
+        raise Exception("Device '{0}' is not a Rack".format(device.name))
+    return device
+
+
+def get_rack_variations(song, track_index, device_index, ctrl=None):
+    """Read variation count, selected index, and macro mapping status."""
+    try:
+        device = _get_rack_device(song, track_index, device_index)
+        return {
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+            "variation_count": getattr(device, "variation_count", 0),
+            "selected_variation_index": getattr(device, "selected_variation_index", -1),
+            "has_macro_mappings": getattr(device, "has_macro_mappings", False),
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting rack variations: " + str(e))
+        raise
+
+
+def rack_variation_action(song, track_index, device_index, action, variation_index=None, ctrl=None):
+    """Perform a variation action on a rack device.
+
+    Args:
+        action: 'store', 'recall', 'delete', or 'randomize'
+        variation_index: Required for 'recall' and 'delete'. Sets selected_variation_index first.
+    """
+    try:
+        device = _get_rack_device(song, track_index, device_index)
+        result = {"device_name": device.name, "action": action}
+        if action == "store":
+            device.store_variation()
+            result["variation_count"] = device.variation_count
+            result["selected_variation_index"] = device.selected_variation_index
+        elif action == "recall":
+            if variation_index is None:
+                raise ValueError("variation_index is required for 'recall'")
+            device.selected_variation_index = int(variation_index)
+            device.recall_selected_variation()
+            result["selected_variation_index"] = device.selected_variation_index
+        elif action == "delete":
+            if variation_index is None:
+                raise ValueError("variation_index is required for 'delete'")
+            device.selected_variation_index = int(variation_index)
+            device.delete_selected_variation()
+            result["variation_count"] = device.variation_count
+        elif action == "randomize":
+            device.randomize_macros()
+            result["randomized"] = True
+        else:
+            raise ValueError("Unknown action '{0}'. Must be store, recall, delete, or randomize".format(action))
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error in rack variation action: " + str(e))
+        raise
+
+
+# --- Simpler-to-Drum-Rack Conversion ---
+
+
+def sliced_simpler_to_drum_rack(song, track_index, device_index, ctrl=None):
+    """Convert a sliced Simpler device to a Drum Rack."""
+    try:
+        if track_index < 0 or track_index >= len(song.tracks):
+            raise IndexError("Track index out of range")
+        track = song.tracks[track_index]
+        if device_index < 0 or device_index >= len(track.devices):
+            raise IndexError("Device index out of range")
+        device = track.devices[device_index]
+        try:
+            from Live.Conversions import sliced_simpler_to_drum_rack as _convert
+        except ImportError:
+            raise Exception("sliced_simpler_to_drum_rack requires Live 12+")
+        device_name = device.name
+        _convert(song, device)
+        return {
+            "converted": True,
+            "source_device": device_name,
+            "track_index": track_index,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error converting Simpler to Drum Rack: " + str(e))
+        raise

@@ -292,3 +292,185 @@ def tap_tempo(song, ctrl=None):
         if ctrl:
             ctrl.log_message("Error tapping tempo: " + str(e))
         raise
+
+
+# --- Undo / Redo ---
+
+
+def undo(song, ctrl=None):
+    """Undo the last action."""
+    try:
+        if not song.can_undo:
+            return {"undone": False, "reason": "Nothing to undo"}
+        song.undo()
+        return {"undone": True}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error performing undo: " + str(e))
+        raise
+
+
+def redo(song, ctrl=None):
+    """Redo the last undone action."""
+    try:
+        if not song.can_redo:
+            return {"redone": False, "reason": "Nothing to redo"}
+        song.redo()
+        return {"redone": True}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error performing redo: " + str(e))
+        raise
+
+
+# --- Additional transport ---
+
+
+def continue_playing(song, ctrl=None):
+    """Continue playback from the current position (does not jump to start)."""
+    try:
+        song.continue_playing()
+        return {"playing": song.is_playing, "position": song.current_song_time}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error continuing playback: " + str(e))
+        raise
+
+
+def re_enable_automation(song, ctrl=None):
+    """Re-enable all automation that has been manually overridden."""
+    try:
+        song.re_enable_automation()
+        return {"re_enabled": True}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error re-enabling automation: " + str(e))
+        raise
+
+
+# --- Cue points ---
+
+
+def get_cue_points(song, ctrl=None):
+    """Get all cue points (markers) in the arrangement."""
+    try:
+        cues = []
+        for cue in song.cue_points:
+            cues.append({
+                "name": cue.name,
+                "time": cue.time,
+            })
+        cues.sort(key=lambda c: c["time"])
+        return {"cue_points": cues, "count": len(cues)}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting cue points: " + str(e))
+        raise
+
+
+def set_or_delete_cue(song, ctrl=None):
+    """Toggle a cue point at the current playback position.
+
+    If a cue point exists at the current position, it is deleted.
+    Otherwise, a new cue point is created.
+    """
+    try:
+        song.set_or_delete_cue()
+        return {"position": song.current_song_time}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error toggling cue point: " + str(e))
+        raise
+
+
+def jump_to_cue(song, direction, ctrl=None):
+    """Jump to the next or previous cue point.
+
+    Args:
+        direction: 'next' or 'prev'
+    """
+    try:
+        if direction == "next":
+            if not song.can_jump_to_next_cue:
+                return {"jumped": False, "reason": "No next cue point"}
+            song.jump_to_next_cue()
+        elif direction == "prev":
+            if not song.can_jump_to_prev_cue:
+                return {"jumped": False, "reason": "No previous cue point"}
+            song.jump_to_prev_cue()
+        else:
+            raise ValueError("direction must be 'next' or 'prev', got '{0}'".format(direction))
+        return {"jumped": True, "position": song.current_song_time}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error jumping to cue: " + str(e))
+        raise
+
+
+def get_groove_pool(song, ctrl=None):
+    """Read the groove pool: global groove amount and list of grooves with their params."""
+    try:
+        result = {
+            "groove_amount": getattr(song, "groove_amount", 1.0),
+            "grooves": [],
+        }
+        pool = getattr(song, "groove_pool", None)
+        if pool is not None and hasattr(pool, "grooves"):
+            for i, groove in enumerate(pool.grooves):
+                groove_info = {
+                    "index": i,
+                    "name": getattr(groove, "name", "Groove {0}".format(i)),
+                    "timing_amount": getattr(groove, "timing_amount", 0.0),
+                    "quantization_amount": getattr(groove, "quantization_amount", 0.0),
+                    "random_amount": getattr(groove, "random_amount", 0.0),
+                    "velocity_amount": getattr(groove, "velocity_amount", 0.0),
+                }
+                result["grooves"].append(groove_info)
+        result["groove_count"] = len(result["grooves"])
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting groove pool: " + str(e))
+        raise
+
+
+def set_groove_settings(song, groove_amount=None, groove_index=None,
+                         timing_amount=None, quantization_amount=None,
+                         random_amount=None, velocity_amount=None, ctrl=None):
+    """Set global groove amount or individual groove parameters."""
+    try:
+        result = {}
+        if groove_amount is not None:
+            song.groove_amount = float(groove_amount)
+            result["groove_amount"] = song.groove_amount
+        if groove_index is not None:
+            pool = getattr(song, "groove_pool", None)
+            if pool is None or not hasattr(pool, "grooves"):
+                raise Exception("Groove pool not available")
+            grooves = list(pool.grooves)
+            groove_index = int(groove_index)
+            if groove_index < 0 or groove_index >= len(grooves):
+                raise IndexError("Groove index {0} out of range (have {1} grooves)".format(
+                    groove_index, len(grooves)))
+            groove = grooves[groove_index]
+            if timing_amount is not None:
+                groove.timing_amount = float(timing_amount)
+            if quantization_amount is not None:
+                groove.quantization_amount = float(quantization_amount)
+            if random_amount is not None:
+                groove.random_amount = float(random_amount)
+            if velocity_amount is not None:
+                groove.velocity_amount = float(velocity_amount)
+            result["groove_index"] = groove_index
+            result["groove_name"] = getattr(groove, "name", "")
+            result["timing_amount"] = groove.timing_amount
+            result["quantization_amount"] = groove.quantization_amount
+            result["random_amount"] = groove.random_amount
+            result["velocity_amount"] = groove.velocity_amount
+        if not result:
+            raise ValueError("No parameters specified")
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting groove settings: " + str(e))
+        raise

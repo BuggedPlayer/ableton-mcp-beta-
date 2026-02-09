@@ -36,15 +36,21 @@ MODIFYING_COMMANDS = {
     "set_arrangement_overdub",
     "start_arrangement_recording", "stop_arrangement_recording",
     "set_metronome", "tap_tempo",
+    "undo", "redo", "continue_playing", "re_enable_automation",
+    "set_or_delete_cue", "jump_to_cue", "set_groove_settings",
     # tracks
     "create_midi_track", "create_audio_track", "create_return_track",
     "set_track_name", "delete_track", "duplicate_track",
     "set_track_color", "arm_track", "disarm_track", "group_tracks",
+    "set_track_routing", "set_track_monitoring",
+    "create_midi_track_with_simpler",
     # clips
     "create_clip", "add_notes_to_clip", "set_clip_name",
     "fire_clip", "stop_clip", "delete_clip",
     "duplicate_clip", "set_clip_looping", "set_clip_loop_points",
     "set_clip_color", "crop_clip", "duplicate_clip_loop", "set_clip_start_end",
+    "set_clip_pitch", "set_clip_launch_mode",
+    "set_clip_launch_quantization", "set_clip_legato", "audio_to_midi",
     # mixer
     "set_track_volume", "set_track_pan", "set_track_mute", "set_track_solo",
     "set_track_arm", "set_track_send",
@@ -53,10 +59,11 @@ MODIFYING_COMMANDS = {
     "set_master_volume",
     # scenes
     "create_scene", "delete_scene", "duplicate_scene",
-    "fire_scene", "set_scene_name",
+    "fire_scene", "set_scene_name", "set_scene_tempo",
     # devices
     "set_device_parameter", "set_device_parameters_batch", "delete_device",
-    "set_macro_value",
+    "set_macro_value", "set_drum_pad", "copy_drum_pad",
+    "rack_variation_action", "sliced_simpler_to_drum_rack",
     # browser
     "load_browser_item", "load_instrument_or_effect", "load_sample",
     # midi
@@ -78,8 +85,10 @@ READ_ONLY_COMMANDS = {
     # session
     "get_session_info", "get_song_transport",
     "get_loop_info", "get_recording_status",
+    "get_cue_points", "get_groove_pool",
     # tracks
     "get_track_info", "get_all_tracks_info", "get_return_tracks_info",
+    "get_track_routing",
     # clips
     "get_clip_info",
     # mixer
@@ -87,6 +96,7 @@ READ_ONLY_COMMANDS = {
     "get_master_track_info",
     # devices
     "get_device_parameters", "get_macro_values",
+    "get_drum_pads", "get_rack_variations",
     # browser
     "get_browser_item", "get_browser_tree", "get_browser_items_at_path",
     "search_browser", "get_user_library", "get_user_folders",
@@ -422,6 +432,23 @@ class AbletonMCP(ControlSurface):
             return handlers.session.set_metronome(song, p.get("enabled", True), ctrl)
         elif cmd == "tap_tempo":
             return handlers.session.tap_tempo(song, ctrl)
+        elif cmd == "undo":
+            return handlers.session.undo(song, ctrl)
+        elif cmd == "redo":
+            return handlers.session.redo(song, ctrl)
+        elif cmd == "continue_playing":
+            return handlers.session.continue_playing(song, ctrl)
+        elif cmd == "re_enable_automation":
+            return handlers.session.re_enable_automation(song, ctrl)
+        elif cmd == "set_or_delete_cue":
+            return handlers.session.set_or_delete_cue(song, ctrl)
+        elif cmd == "jump_to_cue":
+            return handlers.session.jump_to_cue(song, p.get("direction", "next"), ctrl)
+        elif cmd == "set_groove_settings":
+            return handlers.session.set_groove_settings(
+                song, p.get("groove_amount"), p.get("groove_index"),
+                p.get("timing_amount"), p.get("quantization_amount"),
+                p.get("random_amount"), p.get("velocity_amount"), ctrl)
 
         # --- Tracks ---
         elif cmd == "create_midi_track":
@@ -444,6 +471,15 @@ class AbletonMCP(ControlSurface):
             return handlers.tracks.disarm_track(song, p.get("track_index", 0), ctrl)
         elif cmd == "group_tracks":
             return handlers.tracks.group_tracks(song, p.get("track_indices", []), p.get("name", ""), ctrl)
+        elif cmd == "set_track_routing":
+            return handlers.tracks.set_track_routing(
+                song, p.get("track_index", 0),
+                p.get("input_type"), p.get("input_channel"),
+                p.get("output_type"), p.get("output_channel"), ctrl)
+        elif cmd == "set_track_monitoring":
+            return handlers.tracks.set_track_monitoring(song, p.get("track_index", 0), p.get("state", 1), ctrl)
+        elif cmd == "create_midi_track_with_simpler":
+            return handlers.tracks.create_midi_track_with_simpler(song, p.get("track_index", 0), p.get("clip_index", 0), ctrl)
 
         # --- Clips ---
         elif cmd == "create_clip":
@@ -472,6 +508,16 @@ class AbletonMCP(ControlSurface):
             return handlers.clips.duplicate_clip_loop(song, p.get("track_index", 0), p.get("clip_index", 0), ctrl)
         elif cmd == "set_clip_start_end":
             return handlers.clips.set_clip_start_end(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("start_marker"), p.get("end_marker"), ctrl)
+        elif cmd == "set_clip_pitch":
+            return handlers.clips.set_clip_pitch(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("pitch_coarse"), p.get("pitch_fine"), ctrl)
+        elif cmd == "set_clip_launch_mode":
+            return handlers.clips.set_clip_launch_mode(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("launch_mode", 0), ctrl)
+        elif cmd == "set_clip_launch_quantization":
+            return handlers.clips.set_clip_launch_quantization(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("quantization", 14), ctrl)
+        elif cmd == "set_clip_legato":
+            return handlers.clips.set_clip_legato(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("legato", False), ctrl)
+        elif cmd == "audio_to_midi":
+            return handlers.clips.audio_to_midi(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("conversion_type", "melody"), ctrl)
 
         # --- Mixer ---
         elif cmd == "set_track_volume":
@@ -508,6 +554,8 @@ class AbletonMCP(ControlSurface):
             return handlers.scenes.fire_scene(song, p.get("scene_index", 0), ctrl)
         elif cmd == "set_scene_name":
             return handlers.scenes.set_scene_name(song, p.get("scene_index", 0), p.get("name", ""), ctrl)
+        elif cmd == "set_scene_tempo":
+            return handlers.scenes.set_scene_tempo(song, p.get("scene_index", 0), p.get("tempo", 0), ctrl)
 
         # --- Devices ---
         elif cmd == "set_device_parameter":
@@ -525,6 +573,21 @@ class AbletonMCP(ControlSurface):
             return handlers.devices.set_macro_value(
                 song, p.get("track_index", 0), p.get("device_index", 0),
                 p.get("macro_index", 0), p.get("value", 0.0), ctrl)
+        elif cmd == "set_drum_pad":
+            return handlers.devices.set_drum_pad(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("note", 36), p.get("mute"), p.get("solo"), ctrl)
+        elif cmd == "copy_drum_pad":
+            return handlers.devices.copy_drum_pad(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("source_note", 36), p.get("dest_note", 37), ctrl)
+        elif cmd == "rack_variation_action":
+            return handlers.devices.rack_variation_action(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("action", "recall"), p.get("variation_index"), ctrl)
+        elif cmd == "sliced_simpler_to_drum_rack":
+            return handlers.devices.sliced_simpler_to_drum_rack(
+                song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
 
         # --- Browser ---
         elif cmd == "load_browser_item":
@@ -615,6 +678,10 @@ class AbletonMCP(ControlSurface):
             return handlers.session.get_loop_info(song, ctrl)
         elif cmd == "get_recording_status":
             return handlers.session.get_recording_status(song, ctrl)
+        elif cmd == "get_cue_points":
+            return handlers.session.get_cue_points(song, ctrl)
+        elif cmd == "get_groove_pool":
+            return handlers.session.get_groove_pool(song, ctrl)
 
         # --- Tracks ---
         elif cmd == "get_track_info":
@@ -623,6 +690,8 @@ class AbletonMCP(ControlSurface):
             return handlers.tracks.get_all_tracks_info(song, ctrl)
         elif cmd == "get_return_tracks_info":
             return handlers.tracks.get_return_tracks_info(song, ctrl)
+        elif cmd == "get_track_routing":
+            return handlers.tracks.get_track_routing(song, p.get("track_index", 0), ctrl)
 
         # --- Clips ---
         elif cmd == "get_clip_info":
@@ -645,6 +714,10 @@ class AbletonMCP(ControlSurface):
                 p.get("track_type", "track"), ctrl)
         elif cmd == "get_macro_values":
             return handlers.devices.get_macro_values(song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "get_drum_pads":
+            return handlers.devices.get_drum_pads(song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "get_rack_variations":
+            return handlers.devices.get_rack_variations(song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
 
         # --- Browser ---
         elif cmd == "get_browser_item":

@@ -378,6 +378,132 @@ def set_clip_start_end(song, track_index, clip_index, start_marker, end_marker, 
         raise
 
 
+def set_clip_pitch(song, track_index, clip_index, pitch_coarse=None, pitch_fine=None, ctrl=None):
+    """Set pitch transposition for an audio clip.
+
+    Args:
+        pitch_coarse: Semitones (-48 to +48)
+        pitch_fine: Cents (-50 to +50)
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        if not clip.is_audio_clip:
+            raise ValueError("Clip is not an audio clip")
+        if pitch_coarse is not None:
+            clip.pitch_coarse = int(pitch_coarse)
+        if pitch_fine is not None:
+            clip.pitch_fine = float(pitch_fine)
+        return {
+            "pitch_coarse": clip.pitch_coarse,
+            "pitch_fine": clip.pitch_fine,
+            "clip_name": clip.name,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting clip pitch: " + str(e))
+        raise
+
+
+def set_clip_launch_mode(song, track_index, clip_index, launch_mode, ctrl=None):
+    """Set the launch mode for a clip.
+
+    Args:
+        launch_mode: 0=trigger, 1=gate, 2=toggle, 3=repeat
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        clip.launch_mode = int(launch_mode)
+        return {
+            "launch_mode": clip.launch_mode,
+            "clip_name": clip.name,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting clip launch mode: " + str(e))
+        raise
+
+
+def set_clip_launch_quantization(song, track_index, clip_index, quantization, ctrl=None):
+    """Set the launch quantization for a clip.
+
+    Args:
+        quantization: 0=none, 1=8bars, 2=4bars, 3=2bars, 4=bar, 5=half,
+            6=half_triplet, 7=quarter, 8=quarter_triplet, 9=eighth,
+            10=eighth_triplet, 11=sixteenth, 12=sixteenth_triplet,
+            13=thirtysecond, 14=global
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        quantization = int(quantization)
+        if quantization < 0 or quantization > 14:
+            raise ValueError("Launch quantization must be 0-14")
+        clip.launch_quantization = quantization
+        return {
+            "launch_quantization": clip.launch_quantization,
+            "clip_name": clip.name,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting clip launch quantization: " + str(e))
+        raise
+
+
+def set_clip_legato(song, track_index, clip_index, legato, ctrl=None):
+    """Set the legato mode for a clip.
+
+    Args:
+        legato: True = clip plays from position of previously playing clip.
+                False = clip always starts from its start position.
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        clip.legato = bool(legato)
+        return {
+            "legato": clip.legato,
+            "clip_name": clip.name,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting clip legato: " + str(e))
+        raise
+
+
+def audio_to_midi(song, track_index, clip_index, conversion_type, ctrl=None):
+    """Convert an audio clip to a MIDI clip.
+
+    Args:
+        conversion_type: 'drums', 'harmony', or 'melody'
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        if not clip.is_audio_clip:
+            raise ValueError("Clip is not an audio clip")
+        conversion_type = str(conversion_type).lower()
+        if conversion_type not in ("drums", "harmony", "melody"):
+            raise ValueError("conversion_type must be 'drums', 'harmony', or 'melody'")
+        try:
+            from Live.Conversions import audio_to_midi_clip, AudioToMidiType
+        except ImportError:
+            raise Exception("Audio-to-MIDI conversion requires Live 12+")
+        type_map = {
+            "drums": AudioToMidiType.drums_to_midi,
+            "harmony": AudioToMidiType.harmony_to_midi,
+            "melody": AudioToMidiType.melody_to_midi,
+        }
+        audio_to_midi_clip(song, clip, type_map[conversion_type])
+        return {
+            "converted": True,
+            "source_clip": clip.name,
+            "conversion_type": conversion_type,
+            "track_index": track_index,
+            "clip_index": clip_index,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error converting audio to MIDI: " + str(e))
+        raise
+
+
 # --- Helper ---
 
 

@@ -75,3 +75,25 @@ def set_scene_name(song, scene_index, name, ctrl=None):
         if ctrl:
             ctrl.log_message("Error setting scene name: " + str(e))
         raise
+
+
+def set_scene_tempo(song, scene_index, tempo, ctrl=None):
+    """Set or clear a scene's tempo override.
+
+    Args:
+        tempo: BPM value (20-999), or 0 to clear the scene tempo override.
+    """
+    try:
+        if scene_index < 0 or scene_index >= len(song.scenes):
+            raise IndexError("Scene index out of range")
+        scene = song.scenes[scene_index]
+        scene.tempo = float(tempo)
+        return {
+            "scene_index": scene_index,
+            "tempo": scene.tempo,
+            "name": scene.name,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting scene tempo: " + str(e))
+        raise

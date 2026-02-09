@@ -129,6 +129,12 @@ class AbletonConnection:
         "set_return_track_mute", "set_return_track_solo", "set_master_volume",
         "clear_clip_notes", "add_notes_extended", "remove_notes_range",
         "duplicate_clip_loop", "set_song_loop", "set_song_time",
+        "set_track_monitoring", "set_clip_launch_quantization", "set_clip_legato",
+        "set_drum_pad", "copy_drum_pad", "rack_variation_action",
+        "set_groove_settings", "audio_to_midi", "create_midi_track_with_simpler",
+        "sliced_simpler_to_drum_rack", "set_scene_tempo",
+        "undo", "redo", "set_track_routing", "set_clip_pitch", "set_clip_launch_mode",
+        "set_or_delete_cue", "jump_to_cue",
     ])
 
     def send_command(self, command_type: str, params: Dict[str, Any] = None, timeout: float = None) -> Dict[str, Any]:
@@ -6022,6 +6028,706 @@ def get_macro_values(ctx: Context, track_index: int, device_index: int) -> str:
         return f"Invalid input: {e}"
     except Exception as e:
         return f"Error getting macro values: {str(e)}"
+
+
+# ==============================================================================
+# New Tools: v2.1.0 — Undo/Redo, Cue Points, Transport, Pitch, Routing, Scenes
+# ==============================================================================
+
+@mcp.tool()
+def undo(ctx: Context) -> str:
+    """Undo the last action in Ableton.
+
+    Useful for reverting changes made by previous tool calls. Returns whether
+    the undo was performed or if there was nothing to undo.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("undo")
+        if result.get("undone"):
+            return "Undo performed"
+        return f"Nothing to undo: {result.get('reason', 'unknown')}"
+    except Exception as e:
+        return f"Error performing undo: {str(e)}"
+
+
+@mcp.tool()
+def redo(ctx: Context) -> str:
+    """Redo the last undone action in Ableton.
+
+    Re-applies a previously undone action.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("redo")
+        if result.get("redone"):
+            return "Redo performed"
+        return f"Nothing to redo: {result.get('reason', 'unknown')}"
+    except Exception as e:
+        return f"Error performing redo: {str(e)}"
+
+
+@mcp.tool()
+def continue_playing(ctx: Context) -> str:
+    """Continue playback from the current position.
+
+    Unlike start_playback which jumps to the play position, this resumes
+    from exactly where the playhead is now. Useful after stopping to audition
+    a section without losing your place.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("continue_playing")
+        return f"Playback continued from beat {result.get('position', '?')}"
+    except Exception as e:
+        return f"Error continuing playback: {str(e)}"
+
+
+@mcp.tool()
+def re_enable_automation(ctx: Context) -> str:
+    """Re-enable all automation that has been manually overridden.
+
+    When you manually adjust a parameter that has automation, Ableton disables
+    the automation for that parameter (shown as an orange LED). This tool
+    re-enables all overridden automation at once.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("re_enable_automation")
+        return "All automation re-enabled"
+    except Exception as e:
+        return f"Error re-enabling automation: {str(e)}"
+
+
+@mcp.tool()
+def get_cue_points(ctx: Context) -> str:
+    """Get all cue points (arrangement markers) in the song.
+
+    Returns a list of all cue points with their names and beat positions,
+    sorted by time.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_cue_points")
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error getting cue points: {str(e)}"
+
+
+@mcp.tool()
+def set_or_delete_cue(ctx: Context) -> str:
+    """Toggle a cue point at the current playback position.
+
+    If a cue point exists at the current position, it is deleted.
+    Otherwise, a new cue point is created. Use set_playback_position
+    first to move the playhead to the desired location.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_or_delete_cue")
+        return f"Cue point toggled at beat {result.get('position', '?')}"
+    except Exception as e:
+        return f"Error toggling cue point: {str(e)}"
+
+
+@mcp.tool()
+def jump_to_cue(ctx: Context, direction: str) -> str:
+    """Jump the playhead to the next or previous cue point.
+
+    Parameters:
+    - direction: 'next' to jump forward, 'prev' to jump backward
+    """
+    try:
+        if direction not in ("next", "prev"):
+            return "Error: direction must be 'next' or 'prev'"
+        ableton = get_ableton_connection()
+        result = ableton.send_command("jump_to_cue", {"direction": direction})
+        if result.get("jumped"):
+            return f"Jumped to {direction} cue point at beat {result.get('position', '?')}"
+        return f"Cannot jump: {result.get('reason', 'no cue point found')}"
+    except Exception as e:
+        return f"Error jumping to cue: {str(e)}"
+
+
+@mcp.tool()
+def set_clip_pitch(ctx: Context, track_index: int, clip_index: int,
+                   pitch_coarse: int = None, pitch_fine: float = None) -> str:
+    """Set pitch transposition for an audio clip.
+
+    Parameters:
+    - track_index: The index of the track
+    - clip_index: The index of the clip slot
+    - pitch_coarse: Semitones shift (-48 to +48). Optional.
+    - pitch_fine: Cents shift (-50.0 to +50.0). Optional.
+
+    Only works on audio clips (not MIDI). Useful for tuning samples,
+    creating harmonies, or pitch-correcting audio.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        params = {"track_index": track_index, "clip_index": clip_index}
+        if pitch_coarse is not None:
+            params["pitch_coarse"] = pitch_coarse
+        if pitch_fine is not None:
+            params["pitch_fine"] = pitch_fine
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_pitch", params)
+        return f"Clip '{result.get('clip_name', '?')}' pitch set to {result.get('pitch_coarse', 0)} semitones, {result.get('pitch_fine', 0)} cents"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting clip pitch: {str(e)}"
+
+
+@mcp.tool()
+def set_clip_launch_mode(ctx: Context, track_index: int, clip_index: int,
+                         launch_mode: int) -> str:
+    """Set the launch mode for a clip.
+
+    Parameters:
+    - track_index: The index of the track
+    - clip_index: The index of the clip slot
+    - launch_mode: 0=trigger (default), 1=gate (plays while held), 2=toggle, 3=repeat
+
+    Controls how the clip responds to launch triggers in session view.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        mode_names = {0: "trigger", 1: "gate", 2: "toggle", 3: "repeat"}
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_launch_mode", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "launch_mode": launch_mode,
+        })
+        mode_name = mode_names.get(result.get("launch_mode", launch_mode), "unknown")
+        return f"Clip '{result.get('clip_name', '?')}' launch mode set to {mode_name}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting clip launch mode: {str(e)}"
+
+
+@mcp.tool()
+def set_scene_tempo(ctx: Context, scene_index: int, tempo: float) -> str:
+    """Set a tempo override for a scene.
+
+    Parameters:
+    - scene_index: The index of the scene
+    - tempo: BPM value (e.g. 120.0), or 0 to clear the tempo override
+
+    When a scene with a tempo override is fired, the song tempo changes
+    to match. Set to 0 to remove the override.
+    """
+    try:
+        _validate_index(scene_index, "scene_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_scene_tempo", {
+            "scene_index": scene_index,
+            "tempo": tempo,
+        })
+        if tempo == 0:
+            return f"Scene {scene_index} ('{result.get('name', '?')}') tempo override cleared"
+        return f"Scene {scene_index} ('{result.get('name', '?')}') tempo set to {result.get('tempo', tempo)} BPM"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting scene tempo: {str(e)}"
+
+
+@mcp.tool()
+def get_track_routing(ctx: Context, track_index: int) -> str:
+    """Get current input/output routing and available options for a track.
+
+    Parameters:
+    - track_index: The index of the track
+
+    Returns the current input/output routing types and channels, plus lists
+    of all available routing options. Useful for understanding and configuring
+    side-chain routing, resampling, and multi-output setups.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_track_routing", {
+            "track_index": track_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting track routing: {str(e)}"
+
+
+@mcp.tool()
+def set_track_routing(ctx: Context, track_index: int,
+                      input_type: str = None, input_channel: str = None,
+                      output_type: str = None, output_channel: str = None) -> str:
+    """Set input/output routing for a track by display name.
+
+    Parameters:
+    - track_index: The index of the track
+    - input_type: Input routing type (e.g. 'Ext. In', 'No Input', a track name). Optional.
+    - input_channel: Input channel (e.g. '1/2', 'All Channels', 'Pre FX'). Optional.
+    - output_type: Output routing type (e.g. 'Master', 'Sends Only', a track name). Optional.
+    - output_channel: Output channel (e.g. 'Track In'). Optional.
+
+    Use get_track_routing first to see available routing options for the track.
+    Useful for setting up side-chain compression, resampling, or routing to
+    specific outputs.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        params = {"track_index": track_index}
+        if input_type is not None:
+            params["input_type"] = input_type
+        if input_channel is not None:
+            params["input_channel"] = input_channel
+        if output_type is not None:
+            params["output_type"] = output_type
+        if output_channel is not None:
+            params["output_channel"] = output_channel
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_routing", params)
+        changes = [f"{k}={v}" for k, v in result.items() if k not in ("track_index", "track_name")]
+        return f"Track {track_index} ('{result.get('track_name', '?')}') routing updated: {', '.join(changes) if changes else 'no changes'}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting track routing: {str(e)}"
+
+
+@mcp.tool()
+def set_track_monitoring(ctx: Context, track_index: int, state: int) -> str:
+    """Set the monitoring state of a track.
+
+    Parameters:
+    - track_index: The index of the track
+    - state: 0=IN (always monitor input), 1=AUTO (monitor when armed), 2=OFF (never monitor)
+
+    Controls whether the track passes its input through to the output.
+    AUTO is the default and monitors only when the track is armed for recording.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_range(state, "state", 0, 2)
+        state_names = {0: "IN", 1: "AUTO", 2: "OFF"}
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_monitoring", {
+            "track_index": track_index,
+            "state": state,
+        })
+        state_name = state_names.get(result.get("monitoring_state", state), "unknown")
+        return f"Track {track_index} ('{result.get('track_name', '?')}') monitoring set to {state_name}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting track monitoring: {str(e)}"
+
+
+@mcp.tool()
+def set_clip_launch_quantization(ctx: Context, track_index: int, clip_index: int,
+                                  quantization: int) -> str:
+    """Set when a clip starts playing after being triggered.
+
+    Parameters:
+    - track_index: The index of the track
+    - clip_index: The index of the clip slot
+    - quantization: 0=none, 1=8_bars, 2=4_bars, 3=2_bars, 4=bar, 5=half,
+      6=half_triplet, 7=quarter, 8=quarter_triplet, 9=eighth, 10=eighth_triplet,
+      11=sixteenth, 12=sixteenth_triplet, 13=thirtysecond, 14=global
+
+    Overrides the global launch quantization for this specific clip.
+    Use 14 to follow the song's global launch quantization setting.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        _validate_range(quantization, "quantization", 0, 14)
+        quant_names = {
+            0: "none", 1: "8 bars", 2: "4 bars", 3: "2 bars", 4: "1 bar",
+            5: "1/2", 6: "1/2T", 7: "1/4", 8: "1/4T", 9: "1/8", 10: "1/8T",
+            11: "1/16", 12: "1/16T", 13: "1/32", 14: "global",
+        }
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_launch_quantization", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "quantization": quantization,
+        })
+        q_name = quant_names.get(result.get("launch_quantization", quantization), "unknown")
+        return f"Clip '{result.get('clip_name', '?')}' launch quantization set to {q_name}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting clip launch quantization: {str(e)}"
+
+
+@mcp.tool()
+def set_clip_legato(ctx: Context, track_index: int, clip_index: int,
+                     legato: bool) -> str:
+    """Enable or disable legato mode for a clip.
+
+    Parameters:
+    - track_index: The index of the track
+    - clip_index: The index of the clip slot
+    - legato: True = clip plays from the position of the previously playing clip
+              (seamless transition). False = clip starts from its start position.
+
+    Legato mode is useful for live performance, allowing smooth transitions
+    between clips without resetting to the beginning.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_legato", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "legato": legato,
+        })
+        state = "enabled" if result.get("legato", legato) else "disabled"
+        return f"Clip '{result.get('clip_name', '?')}' legato {state}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting clip legato: {str(e)}"
+
+
+@mcp.tool()
+def get_drum_pads(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get information about all drum pads in a Drum Rack device.
+
+    Parameters:
+    - track_index: The index of the track containing the Drum Rack
+    - device_index: The index of the Drum Rack device on the track
+
+    Returns a list of pads with their MIDI note number, name, mute, and solo states.
+    Use this to inspect drum pad assignments before modifying them with set_drum_pad.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_drum_pads", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting drum pads: {str(e)}"
+
+
+@mcp.tool()
+def set_drum_pad(ctx: Context, track_index: int, device_index: int,
+                  note: int, mute: bool = None, solo: bool = None) -> str:
+    """Set mute or solo state on a drum pad by MIDI note number.
+
+    Parameters:
+    - track_index: The index of the track containing the Drum Rack
+    - device_index: The index of the Drum Rack device on the track
+    - note: MIDI note number (0-127) identifying the pad (e.g. 36=C1 kick)
+    - mute: True to mute the pad, False to unmute. Optional.
+    - solo: True to solo the pad, False to unsolo. Optional.
+
+    Use get_drum_pads first to see available pads and their note numbers.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        _validate_range(note, "note", 0, 127)
+        params = {"track_index": track_index, "device_index": device_index, "note": note}
+        if mute is not None:
+            params["mute"] = mute
+        if solo is not None:
+            params["solo"] = solo
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_drum_pad", params)
+        return f"Drum pad '{result.get('name', '?')}' (note {note}): mute={result.get('mute')}, solo={result.get('solo')}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting drum pad: {str(e)}"
+
+
+@mcp.tool()
+def copy_drum_pad(ctx: Context, track_index: int, device_index: int,
+                   source_note: int, dest_note: int) -> str:
+    """Copy the contents of one drum pad to another.
+
+    Parameters:
+    - track_index: The index of the track containing the Drum Rack
+    - device_index: The index of the Drum Rack device on the track
+    - source_note: MIDI note of the pad to copy FROM (0-127)
+    - dest_note: MIDI note of the pad to copy TO (0-127)
+
+    Copies the device chain (instrument + effects) from the source pad
+    to the destination pad. The destination pad's previous contents are replaced.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        _validate_range(source_note, "source_note", 0, 127)
+        _validate_range(dest_note, "dest_note", 0, 127)
+        ableton = get_ableton_connection()
+        result = ableton.send_command("copy_drum_pad", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "source_note": source_note,
+            "dest_note": dest_note,
+        })
+        return f"Copied drum pad from note {source_note} ('{result.get('source_name', '?')}') to note {dest_note}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error copying drum pad: {str(e)}"
+
+
+@mcp.tool()
+def get_rack_variations(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get variation info for a Rack device (macro snapshots).
+
+    Parameters:
+    - track_index: The index of the track containing the Rack
+    - device_index: The index of the Rack device
+
+    Returns the number of stored variations, which variation is currently selected,
+    and whether the rack has macro mappings. Use with rack_variation_action to
+    store, recall, or delete variations.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_rack_variations", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting rack variations: {str(e)}"
+
+
+@mcp.tool()
+def rack_variation_action(ctx: Context, track_index: int, device_index: int,
+                           action: str, variation_index: int = None) -> str:
+    """Perform a variation action on a Rack device (macro snapshots).
+
+    Parameters:
+    - track_index: The index of the track containing the Rack
+    - device_index: The index of the Rack device
+    - action: One of 'store' (save current macros as new variation),
+              'recall' (load a stored variation), 'delete' (remove a variation),
+              'randomize' (randomize all macro values)
+    - variation_index: Required for 'recall' and 'delete'. The 0-based variation index.
+
+    Use get_rack_variations first to see how many variations exist.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        if action not in ("store", "recall", "delete", "randomize"):
+            raise ValueError("action must be 'store', 'recall', 'delete', or 'randomize'")
+        if action in ("recall", "delete") and variation_index is None:
+            raise ValueError(f"variation_index is required for '{action}'")
+        params = {
+            "track_index": track_index,
+            "device_index": device_index,
+            "action": action,
+        }
+        if variation_index is not None:
+            params["variation_index"] = variation_index
+        ableton = get_ableton_connection()
+        result = ableton.send_command("rack_variation_action", params)
+        device_name = result.get("device_name", "?")
+        if action == "store":
+            return f"Stored new variation on '{device_name}' (now {result.get('variation_count', '?')} variations)"
+        elif action == "recall":
+            return f"Recalled variation {variation_index} on '{device_name}'"
+        elif action == "delete":
+            return f"Deleted variation {variation_index} from '{device_name}' ({result.get('variation_count', '?')} remaining)"
+        else:
+            return f"Randomized macros on '{device_name}'"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error performing rack variation action: {str(e)}"
+
+
+@mcp.tool()
+def get_groove_pool(ctx: Context) -> str:
+    """Get the groove pool contents and global groove amount.
+
+    Returns the global groove amount (0.0-1.0) and a list of all grooves
+    with their timing, quantization, random, and velocity amounts.
+    Use this to inspect groove settings before modifying them with set_groove_settings.
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_groove_pool")
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error getting groove pool: {str(e)}"
+
+
+@mcp.tool()
+def set_groove_settings(ctx: Context,
+                         groove_amount: float = None,
+                         groove_index: int = None,
+                         timing_amount: float = None,
+                         quantization_amount: float = None,
+                         random_amount: float = None,
+                         velocity_amount: float = None) -> str:
+    """Set global groove amount or individual groove parameters.
+
+    Parameters:
+    - groove_amount: Global groove intensity (0.0 to 1.0). Optional.
+    - groove_index: Index of the groove to modify (from get_groove_pool). Optional.
+    - timing_amount: Groove timing influence (0.0 to 1.0). Requires groove_index.
+    - quantization_amount: Groove quantization amount (0.0 to 1.0). Requires groove_index.
+    - random_amount: Groove random timing variation (0.0 to 1.0). Requires groove_index.
+    - velocity_amount: Groove velocity influence (0.0 to 1.0). Requires groove_index.
+
+    Set groove_amount alone to change the global groove intensity, or specify
+    groove_index with one or more individual parameters to modify a specific groove.
+    """
+    try:
+        params = {}
+        if groove_amount is not None:
+            _validate_range(groove_amount, "groove_amount", 0.0, 1.0)
+            params["groove_amount"] = groove_amount
+        if groove_index is not None:
+            _validate_index(groove_index, "groove_index")
+            params["groove_index"] = groove_index
+        if timing_amount is not None:
+            _validate_range(timing_amount, "timing_amount", 0.0, 1.0)
+            params["timing_amount"] = timing_amount
+        if quantization_amount is not None:
+            _validate_range(quantization_amount, "quantization_amount", 0.0, 1.0)
+            params["quantization_amount"] = quantization_amount
+        if random_amount is not None:
+            _validate_range(random_amount, "random_amount", 0.0, 1.0)
+            params["random_amount"] = random_amount
+        if velocity_amount is not None:
+            _validate_range(velocity_amount, "velocity_amount", 0.0, 1.0)
+            params["velocity_amount"] = velocity_amount
+        if not params:
+            return "No parameters specified. Provide groove_amount or groove_index with params."
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_groove_settings", params)
+        parts = []
+        if "groove_amount" in result:
+            parts.append(f"Global groove amount: {result['groove_amount']}")
+        if "groove_index" in result:
+            parts.append(f"Groove {result['groove_index']} ('{result.get('groove_name', '?')}'): "
+                         f"timing={result.get('timing_amount', '?')}, "
+                         f"quantize={result.get('quantization_amount', '?')}, "
+                         f"random={result.get('random_amount', '?')}, "
+                         f"velocity={result.get('velocity_amount', '?')}")
+        return " | ".join(parts)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting groove settings: {str(e)}"
+
+
+@mcp.tool()
+def audio_to_midi(ctx: Context, track_index: int, clip_index: int,
+                   conversion_type: str) -> str:
+    """Convert an audio clip to a MIDI clip using Ableton's audio-to-MIDI algorithms.
+
+    Parameters:
+    - track_index: The index of the track containing the audio clip
+    - clip_index: The index of the clip slot containing the audio clip
+    - conversion_type: 'drums' (percussive audio to drum MIDI),
+                       'harmony' (polyphonic audio to chord MIDI),
+                       'melody' (monophonic audio to single-note MIDI)
+
+    Creates a new MIDI track with the converted clip. The original audio clip
+    is not modified. This is equivalent to right-clicking an audio clip and
+    selecting "Convert Drums/Harmony/Melody to New MIDI Track" in Ableton.
+
+    Requires Live 12+.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        if conversion_type not in ("drums", "harmony", "melody"):
+            raise ValueError("conversion_type must be 'drums', 'harmony', or 'melody'")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("audio_to_midi", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "conversion_type": conversion_type,
+        }, timeout=30.0)
+        return f"Converted audio clip '{result.get('source_clip', '?')}' to MIDI ({conversion_type}). A new MIDI track was created."
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error converting audio to MIDI: {str(e)}"
+
+
+@mcp.tool()
+def create_midi_track_with_simpler(ctx: Context, track_index: int, clip_index: int) -> str:
+    """Create a new MIDI track with a Simpler instrument loaded with an audio clip's sample.
+
+    Parameters:
+    - track_index: The index of the track containing the source audio clip
+    - clip_index: The index of the clip slot containing the audio clip
+
+    Creates a new MIDI track with a Simpler device that has the audio clip's
+    sample loaded. You can then play the sample chromatically via MIDI.
+
+    Requires Live 12+.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("create_midi_track_with_simpler", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+        }, timeout=20.0)
+        return f"Created MIDI track with Simpler from audio clip '{result.get('source_clip', '?')}'"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error creating MIDI track with Simpler: {str(e)}"
+
+
+@mcp.tool()
+def sliced_simpler_to_drum_rack(ctx: Context, track_index: int, device_index: int) -> str:
+    """Convert a sliced Simpler device into a Drum Rack.
+
+    Parameters:
+    - track_index: The index of the track containing the Simpler
+    - device_index: The index of the Simpler device on the track
+
+    The Simpler must be in Slicing mode (not Classic or One-Shot).
+    Each slice becomes a separate pad in the Drum Rack, allowing
+    independent processing and effects per slice.
+
+    Requires Live 12+.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("sliced_simpler_to_drum_rack", {
+            "track_index": track_index,
+            "device_index": device_index,
+        }, timeout=20.0)
+        return f"Converted Simpler '{result.get('source_device', '?')}' to Drum Rack"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error converting Simpler to Drum Rack: {str(e)}"
 
 
 # Main execution

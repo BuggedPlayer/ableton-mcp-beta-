@@ -324,3 +324,162 @@ def get_return_tracks_info(song, ctrl=None):
         if ctrl:
             ctrl.log_message("Error getting return tracks info: " + str(e))
         raise
+
+
+def get_track_routing(song, track_index, ctrl=None):
+    """Get current input/output routing and available options for a track."""
+    try:
+        if track_index < 0 or track_index >= len(song.tracks):
+            raise IndexError("Track index out of range")
+        track = song.tracks[track_index]
+        result = {
+            "track_index": track_index,
+            "track_name": track.name,
+        }
+        # Current routing
+        try:
+            result["input_routing_type"] = str(track.input_routing_type.display_name)
+        except Exception:
+            result["input_routing_type"] = None
+        try:
+            result["input_routing_channel"] = str(track.input_routing_channel.display_name)
+        except Exception:
+            result["input_routing_channel"] = None
+        try:
+            result["output_routing_type"] = str(track.output_routing_type.display_name)
+        except Exception:
+            result["output_routing_type"] = None
+        try:
+            result["output_routing_channel"] = str(track.output_routing_channel.display_name)
+        except Exception:
+            result["output_routing_channel"] = None
+        # Available input types
+        try:
+            result["available_input_types"] = [
+                str(r.display_name) for r in track.available_input_routing_types
+            ]
+        except Exception:
+            result["available_input_types"] = []
+        # Available output types
+        try:
+            result["available_output_types"] = [
+                str(r.display_name) for r in track.available_output_routing_types
+            ]
+        except Exception:
+            result["available_output_types"] = []
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting track routing: " + str(e))
+        raise
+
+
+def set_track_monitoring(song, track_index, state, ctrl=None):
+    """Set the monitoring state of a track.
+
+    Args:
+        state: 0=IN (always monitor), 1=AUTO (monitor when armed), 2=OFF (never monitor)
+    """
+    try:
+        if track_index < 0 or track_index >= len(song.tracks):
+            raise IndexError("Track index out of range")
+        track = song.tracks[track_index]
+        state = int(state)
+        if state < 0 or state > 2:
+            raise ValueError("Monitoring state must be 0 (IN), 1 (AUTO), or 2 (OFF)")
+        track.current_monitoring_state = state
+        return {
+            "track_index": track_index,
+            "track_name": track.name,
+            "monitoring_state": track.current_monitoring_state,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting track monitoring: " + str(e))
+        raise
+
+
+def create_midi_track_with_simpler(song, track_index, clip_index, ctrl=None):
+    """Create a new MIDI track with a Simpler containing an audio clip's sample."""
+    try:
+        if track_index < 0 or track_index >= len(song.tracks):
+            raise IndexError("Track index out of range")
+        track = song.tracks[track_index]
+        if clip_index < 0 or clip_index >= len(track.clip_slots):
+            raise IndexError("Clip index out of range")
+        clip_slot = track.clip_slots[clip_index]
+        if not clip_slot.has_clip:
+            raise Exception("No clip in slot")
+        clip = clip_slot.clip
+        if not clip.is_audio_clip:
+            raise ValueError("Clip is not an audio clip")
+        try:
+            from Live.Conversions import create_midi_track_with_simpler as _create
+        except ImportError:
+            raise Exception("create_midi_track_with_simpler requires Live 12+")
+        _create(song, clip)
+        return {
+            "created": True,
+            "source_clip": clip.name,
+            "source_track_index": track_index,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error creating MIDI track with Simpler: " + str(e))
+        raise
+
+
+def set_track_routing(song, track_index, input_type=None, input_channel=None,
+                      output_type=None, output_channel=None, ctrl=None):
+    """Set track input/output routing by display name.
+
+    Args:
+        input_type: Display name of input routing type (e.g. 'Ext. In', 'No Input')
+        input_channel: Display name of input channel (e.g. '1/2', 'All Channels')
+        output_type: Display name of output routing type (e.g. 'Master', 'Sends Only')
+        output_channel: Display name of output channel
+    """
+    try:
+        if track_index < 0 or track_index >= len(song.tracks):
+            raise IndexError("Track index out of range")
+        track = song.tracks[track_index]
+        changes = {}
+        if input_type is not None:
+            for rt in track.available_input_routing_types:
+                if str(rt.display_name) == input_type:
+                    track.input_routing_type = rt
+                    changes["input_routing_type"] = input_type
+                    break
+            else:
+                raise ValueError("Input type '{0}' not found".format(input_type))
+        if input_channel is not None:
+            for ch in track.available_input_routing_channels:
+                if str(ch.display_name) == input_channel:
+                    track.input_routing_channel = ch
+                    changes["input_routing_channel"] = input_channel
+                    break
+            else:
+                raise ValueError("Input channel '{0}' not found".format(input_channel))
+        if output_type is not None:
+            for rt in track.available_output_routing_types:
+                if str(rt.display_name) == output_type:
+                    track.output_routing_type = rt
+                    changes["output_routing_type"] = output_type
+                    break
+            else:
+                raise ValueError("Output type '{0}' not found".format(output_type))
+        if output_channel is not None:
+            for ch in track.available_output_routing_channels:
+                if str(ch.display_name) == output_channel:
+                    track.output_routing_channel = ch
+                    changes["output_routing_channel"] = output_channel
+                    break
+            else:
+                raise ValueError("Output channel '{0}' not found".format(output_channel))
+        changes["track_index"] = track_index
+        changes["track_name"] = track.name
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting track routing: " + str(e))
+        raise
