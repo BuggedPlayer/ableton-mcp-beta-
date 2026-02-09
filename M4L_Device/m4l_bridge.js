@@ -910,7 +910,14 @@ function handleSimplerSlice(args) {
 
     var sliceTime = 0;
     var requestId;
-    if (action === "insert" || action === "remove" || action === "move") {
+    if (action === "move") {
+        if (args.length < 6) {
+            sendError("simpler_slice move requires old_time, new_time, and request_id", "");
+            return;
+        }
+        sliceTime = parseFloat(args[3]);
+        requestId = args[args.length - 1].toString();
+    } else if (action === "insert" || action === "remove") {
         if (args.length < 5) {
             sendError("simpler_slice " + action + " requires slice_time and request_id", "");
             return;
@@ -949,12 +956,17 @@ function handleSimplerSlice(args) {
                 sampleApi.call("clear_slices");
                 sendResult({ action: "clear" }, requestId);
                 break;
+            case "move":
+                var newTime = parseFloat(args[4]);
+                sampleApi.call("move_slice", sliceTime, newTime);
+                sendResult({ action: "move", old_time: sliceTime, new_time: newTime }, requestId);
+                break;
             case "reset":
                 sampleApi.call("reset_slices");
                 sendResult({ action: "reset" }, requestId);
                 break;
             default:
-                sendError("Unknown slice action: " + action + " (use insert, remove, clear, reset)", requestId);
+                sendError("Unknown slice action: " + action + " (use insert, remove, move, clear, reset)", requestId);
                 break;
         }
     } catch (e) {
@@ -1506,11 +1518,17 @@ function _sendNextResponsePiece() {
         t.schedule(RESPONSE_CHUNK_DELAY);
     } else {
         _responseSendState = null;
-        // Drain queue: if another response was queued, start sending it
-        if (_responseSendQueue.length > 0) {
-            var next = _responseSendQueue.shift();
-            sendResponse(next);
-        }
+        _drainResponseQueue();
+    }
+}
+
+function _drainResponseQueue() {
+    while (_responseSendQueue.length > 0) {
+        var next = _responseSendQueue.shift();
+        sendResponse(next);
+        // If sendResponse started a chunked send, stop draining —
+        // the next drain will happen when _sendNextResponsePiece completes
+        if (_responseSendState) break;
     }
 }
 
@@ -1553,8 +1571,8 @@ function _base64decode(str) {
         var b3 = lookup[str.charAt(i++)] || 0;
         var triplet = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
         result += String.fromCharCode((triplet >> 16) & 255);
-        if (i - 2 <= str.length) result += String.fromCharCode((triplet >> 8) & 255);
-        if (i - 1 <= str.length) result += String.fromCharCode(triplet & 255);
+        if (i - 2 < str.length) result += String.fromCharCode((triplet >> 8) & 255);
+        if (i - 1 < str.length) result += String.fromCharCode(triplet & 255);
     }
     return result;
 }

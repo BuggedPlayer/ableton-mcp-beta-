@@ -167,6 +167,11 @@ def set_loop_end(song, position, ctrl=None):
 def set_loop_length(song, length, ctrl=None):
     """Set the loop length."""
     try:
+        if length <= 0:
+            msg = "Loop length must be positive, got {0}".format(length)
+            if ctrl:
+                ctrl.log_message("Invalid loop length: " + msg)
+            raise ValueError(msg)
         song.loop_length = length
         return {
             "loop_start": song.loop_start,

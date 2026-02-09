@@ -84,7 +84,7 @@ PREFERRED_LABELS = {
     38: 'SN', 40: 'SN',  # Snares
     37: 'SS',            # Sidestick
     39: 'CL',            # Clap
-    42: 'HC', 44: 'HC',  # Hi-hat closed
+    42: 'HC', 44: 'HP',  # Hi-hat closed / pedal
     46: 'HO',            # Hi-hat open
     45: 'LT', 47: 'LT',  # Low tom
     48: 'MT',            # Mid tom

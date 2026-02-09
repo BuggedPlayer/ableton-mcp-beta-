@@ -280,6 +280,12 @@ def clear_track_automation(song, track_index, parameter_name, start_time, end_ti
         if not hasattr(parameter, "automation_envelope"):
             raise Exception("Parameter does not support automation")
 
+        if end_time <= start_time:
+            msg = "End time must be greater than start time"
+            if ctrl:
+                ctrl.log_message("Invalid clear range: " + msg)
+            raise ValueError(msg)
+
         automation_envelope = parameter.automation_envelope
         current_value = parameter.value
         automation_envelope.insert_step(start_time, end_time - start_time, current_value)
