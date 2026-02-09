@@ -963,11 +963,12 @@ function handleSimplerSlice(args) {
                 sampleApi.call("clear_slices");
                 sendResult({ action: "clear" }, requestId);
                 break;
-            case "move":
-                var newTime = parseFloat(args[4]);
+            case "move": {
+                let newTime = parseFloat(args[4]);
                 sampleApi.call("move_slice", sliceTime, newTime);
                 sendResult({ action: "move", old_time: sliceTime, new_time: newTime }, requestId);
                 break;
+            }
             case "reset":
                 sampleApi.call("reset_slices");
                 sendResult({ action: "reset" }, requestId);
@@ -1473,6 +1474,13 @@ function _toUrlSafe(b64) {
 }
 
 function sendResponse(jsonStr) {
+    // If a chunked send is in progress, queue this response (regardless of size)
+    if (_responseSendState) {
+        _responseSendQueue.push(jsonStr);
+        post("sendResponse: queued (send busy), queue depth=" + _responseSendQueue.length + "\n");
+        return;
+    }
+
     // Small response — encode + send directly (backward compatible)
     if (jsonStr.length <= 1500) {
         outlet(0, _toUrlSafe(_base64encode(jsonStr)));
@@ -1480,12 +1488,6 @@ function sendResponse(jsonStr) {
     }
 
     // Large response — store raw JSON, defer ALL chunk sending via Task
-    if (_responseSendState) {
-        // Previous chunked send still in progress — queue this one
-        _responseSendQueue.push(jsonStr);
-        post("sendResponse: queued (send busy), queue depth=" + _responseSendQueue.length + "\n");
-        return;
-    }
 
     var totalChunks = Math.ceil(jsonStr.length / RESPONSE_PIECE_SIZE);
     post("sendResponse: " + jsonStr.length + " chars JSON -> " + totalChunks + " chunks\n");

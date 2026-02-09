@@ -103,13 +103,10 @@ def set_song_loop(song, enabled, start, length, ctrl=None):
         if start is not None:
             song.loop_start = max(0.0, float(start))
         if length is not None:
-            l = float(length)
-            if l <= 0:
-                msg = "Loop length must be positive, got {0}".format(l)
-                if ctrl:
-                    ctrl.log_message("Invalid loop length: " + msg)
-                raise ValueError(msg)
-            song.loop_length = l
+            length_val = float(length)
+            if length_val <= 0:
+                raise ValueError("Loop length must be positive, got {0}".format(length_val))
+            song.loop_length = length_val
         # Return the values we SET (not read-back, which can be stale)
         result = {}
         result["loop_enabled"] = bool(enabled) if enabled is not None else song.loop
@@ -155,14 +152,12 @@ def set_loop_start(song, position, ctrl=None):
 def set_loop_end(song, position, ctrl=None):
     """Set the loop end position."""
     try:
-        if position <= song.loop_start:
-            msg = "Loop end ({0}) must be greater than loop start ({1})".format(
-                position, song.loop_start)
-            if ctrl:
-                ctrl.log_message("Invalid loop end: " + msg)
-            raise ValueError(msg)
+        pos = float(position)
+        if pos <= song.loop_start:
+            raise ValueError("Loop end ({0}) must be greater than loop start ({1})".format(
+                pos, song.loop_start))
         # loop_end isn't a direct property; compute via loop_length
-        song.loop_length = position - song.loop_start
+        song.loop_length = pos - song.loop_start
         return {"loop_start": song.loop_start, "loop_end": song.loop_start + song.loop_length}
     except Exception as e:
         if ctrl:
@@ -173,12 +168,10 @@ def set_loop_end(song, position, ctrl=None):
 def set_loop_length(song, length, ctrl=None):
     """Set the loop length."""
     try:
-        if length <= 0:
-            msg = "Loop length must be positive, got {0}".format(length)
-            if ctrl:
-                ctrl.log_message("Invalid loop length: " + msg)
-            raise ValueError(msg)
-        song.loop_length = length
+        length_val = float(length)
+        if length_val <= 0:
+            raise ValueError("Loop length must be positive, got {0}".format(length_val))
+        song.loop_length = length_val
         return {
             "loop_start": song.loop_start,
             "loop_end": song.loop_start + song.loop_length,
