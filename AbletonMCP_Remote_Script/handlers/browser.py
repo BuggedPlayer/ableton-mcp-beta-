@@ -482,3 +482,41 @@ def get_user_folders(song, ctrl=None):
         if ctrl:
             ctrl.log_message("Error getting user folders: {0}".format(str(e)))
         raise
+
+
+def preview_browser_item(song, uri=None, action="preview", ctrl=None):
+    """Preview (audition) a browser item, or stop the current preview.
+
+    Args:
+        uri: The URI of the browser item to preview (required for 'preview' action).
+        action: 'preview' to start previewing, 'stop' to stop the current preview.
+    """
+    try:
+        if ctrl is None:
+            raise RuntimeError("preview_browser_item requires ctrl for application()")
+        app = ctrl.application()
+        if not app:
+            raise RuntimeError("Could not access Live application")
+        browser = app.browser
+        if action == "stop":
+            browser.stop_preview()
+            return {"action": "stop", "previewing": False}
+        elif action == "preview":
+            if not uri:
+                raise ValueError("uri is required for preview action")
+            item = find_browser_item_by_uri(browser, uri, ctrl=ctrl)
+            if item is None:
+                raise Exception("Browser item not found for URI: {0}".format(uri))
+            browser.preview_item(item)
+            return {
+                "action": "preview",
+                "uri": uri,
+                "name": getattr(item, "name", "Unknown"),
+                "previewing": True,
+            }
+        else:
+            raise ValueError("action must be 'preview' or 'stop', got '{0}'".format(action))
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error previewing browser item: {0}".format(str(e)))
+        raise

@@ -139,6 +139,10 @@ class AbletonConnection:
         "set_song_settings", "trigger_session_record", "navigate_playback",
         "select_scene", "select_track", "set_detail_clip",
         "set_transmute_properties",
+        "set_track_fold", "set_crossfade_assign",
+        "duplicate_clip_region", "move_clip_playing_pos", "set_clip_grid",
+        "set_simpler_properties", "simpler_sample_action", "manage_sample_slices",
+        "preview_browser_item",
     ])
 
     def send_command(self, command_type: str, params: Dict[str, Any] = None, timeout: float = None) -> Dict[str, Any]:
@@ -7213,6 +7217,377 @@ def set_transmute_properties(ctx: Context, track_index: int, device_index: int,
         return f"Invalid input: {e}"
     except Exception as e:
         return f"Error setting Transmute properties: {str(e)}"
+
+
+# --- Track Meters & Fold ---
+
+
+@mcp.tool()
+def get_track_meters(ctx: Context, track_index: int = None) -> str:
+    """Get live output meter levels and currently playing/fired clip slot info.
+
+    Parameters:
+    - track_index: Optional. If provided, returns data for just that track. If omitted, returns all tracks.
+
+    Returns output_meter_left/right (0.0-1.0), playing_slot_index (-1 if none),
+    and fired_slot_index (-1 if none).
+    """
+    try:
+        params = {}
+        if track_index is not None:
+            _validate_index(track_index, "track_index")
+            params["track_index"] = track_index
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_track_meters", params)
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting track meters: {str(e)}"
+
+
+@mcp.tool()
+def set_track_fold(ctx: Context, track_index: int, fold_state: bool) -> str:
+    """Collapse or expand a group track.
+
+    Parameters:
+    - track_index: The index of the group track
+    - fold_state: True to collapse (fold), False to expand (unfold)
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_fold", {
+            "track_index": track_index,
+            "fold_state": fold_state,
+        })
+        name = result.get("track_name", "?")
+        state = "collapsed" if fold_state else "expanded"
+        return f"Track '{name}' {state}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting track fold: {str(e)}"
+
+
+# --- Crossfade ---
+
+
+@mcp.tool()
+def set_crossfade_assign(ctx: Context, track_index: int, assign: int) -> str:
+    """Set A/B crossfade assignment for a track.
+
+    Parameters:
+    - track_index: The index of the track
+    - assign: 0=NONE (no crossfade), 1=A, 2=B
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        if assign not in (0, 1, 2):
+            return "assign must be 0 (NONE), 1 (A), or 2 (B)"
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_crossfade_assign", {
+            "track_index": track_index,
+            "assign": assign,
+        })
+        name = result.get("track_name", "?")
+        label = result.get("crossfade_assign", "?")
+        return f"Track '{name}' crossfade set to {label}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting crossfade assign: {str(e)}"
+
+
+# --- Clip Region, Playing Pos, Grid ---
+
+
+@mcp.tool()
+def duplicate_clip_region(ctx: Context, track_index: int, clip_index: int,
+                           region_start: float, region_length: float,
+                           destination_time: float, pitch: int = -1,
+                           transposition_amount: int = 0) -> str:
+    """Duplicate notes in a MIDI clip region to another position, with optional transposition.
+
+    Parameters:
+    - track_index: Track containing the clip
+    - clip_index: The MIDI clip slot index
+    - region_start: Start time of the region to duplicate (in beats)
+    - region_length: Length of the region to duplicate (in beats)
+    - destination_time: Where to place the duplicated notes (in beats)
+    - pitch: Only duplicate notes at this MIDI pitch (-1 for all notes). Default: -1
+    - transposition_amount: Semitones to transpose the duplicated notes. Default: 0
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("duplicate_clip_region", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "region_start": region_start,
+            "region_length": region_length,
+            "destination_time": destination_time,
+            "pitch": pitch,
+            "transposition_amount": transposition_amount,
+        })
+        return f"Duplicated region [{region_start}–{region_start + region_length}] to time {destination_time} (transpose: {transposition_amount} semitones)"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error duplicating clip region: {str(e)}"
+
+
+@mcp.tool()
+def move_clip_playing_pos(ctx: Context, track_index: int, clip_index: int,
+                           time: float) -> str:
+    """Jump to a position within a currently playing clip.
+
+    Parameters:
+    - track_index: Track containing the clip
+    - clip_index: The clip slot index
+    - time: The time position to jump to within the clip (in beats)
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("move_clip_playing_pos", {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "time": time,
+        })
+        return f"Moved clip playing position to {time}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error moving clip playing position: {str(e)}"
+
+
+@mcp.tool()
+def set_clip_grid(ctx: Context, track_index: int, clip_index: int,
+                   grid_quantization: int = None, grid_is_triplet: bool = None) -> str:
+    """Set the MIDI editor grid resolution for a clip.
+
+    Parameters:
+    - track_index: Track containing the clip
+    - clip_index: The clip slot index
+    - grid_quantization: Grid resolution enum value. Optional.
+    - grid_is_triplet: True for triplet grid, False for standard. Optional.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(clip_index, "clip_index")
+        params = {"track_index": track_index, "clip_index": clip_index}
+        if grid_quantization is not None:
+            params["grid_quantization"] = grid_quantization
+        if grid_is_triplet is not None:
+            params["grid_is_triplet"] = grid_is_triplet
+        if len(params) == 2:
+            return "No parameters specified. Provide grid_quantization and/or grid_is_triplet."
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_clip_grid", params)
+        changes = [f"{k}={v}" for k, v in result.items()
+                   if k not in ("track_index", "clip_index")]
+        return f"Clip grid updated: {', '.join(changes)}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting clip grid: {str(e)}"
+
+
+# --- Simpler / Sample ---
+
+
+@mcp.tool()
+def get_simpler_properties(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get Simpler device and sample properties: playback mode, voices, retrigger,
+    sample markers, gain, warp settings, slicing config, and all warp engine parameters.
+
+    Parameters:
+    - track_index: The index of the track containing the Simpler
+    - device_index: The index of the Simpler device on the track
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_simpler_properties", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting Simpler properties: {str(e)}"
+
+
+@mcp.tool()
+def set_simpler_properties(ctx: Context, track_index: int, device_index: int,
+                            playback_mode: int = None, voices: int = None,
+                            retrigger: bool = None, slicing_playback_mode: int = None,
+                            start_marker: int = None, end_marker: int = None,
+                            gain: float = None, warp_mode: int = None,
+                            warping: bool = None, slicing_style: int = None,
+                            slicing_sensitivity: float = None,
+                            slicing_beat_division: int = None,
+                            beats_granulation_resolution: int = None,
+                            beats_transient_envelope: float = None,
+                            beats_transient_loop_mode: int = None,
+                            complex_pro_formants: float = None,
+                            complex_pro_envelope: float = None,
+                            texture_grain_size: float = None,
+                            texture_flux: float = None,
+                            tones_grain_size: float = None) -> str:
+    """Set Simpler device and sample properties. All parameters are optional.
+
+    Parameters:
+    - track_index, device_index: Identify the Simpler device
+    - playback_mode: 0=Classic, 1=One-Shot, 2=Slicing
+    - voices: Number of polyphony voices
+    - retrigger: True/False for retrigger mode
+    - slicing_playback_mode: 0=Mono, 1=Poly, 2=Thru
+    - start_marker, end_marker: Sample start/end in sample time
+    - gain: Sample gain
+    - warp_mode: Warp mode index
+    - warping: True/False to enable warping
+    - slicing_style: 0=Transient, 1=Beat, 2=Region, 3=Manual
+    - slicing_sensitivity: 0.0-1.0 sensitivity for auto-slicing
+    - slicing_beat_division: Beat division index for beat slicing
+    - beats_granulation_resolution, beats_transient_envelope, beats_transient_loop_mode: Beats warp params
+    - complex_pro_formants, complex_pro_envelope: Complex Pro warp params
+    - texture_grain_size, texture_flux: Texture warp params
+    - tones_grain_size: Tones warp param
+
+    Use get_simpler_properties first to see current values and available options.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        params = {"track_index": track_index, "device_index": device_index}
+        local_vars = {
+            "playback_mode": playback_mode, "voices": voices, "retrigger": retrigger,
+            "slicing_playback_mode": slicing_playback_mode,
+            "start_marker": start_marker, "end_marker": end_marker, "gain": gain,
+            "warp_mode": warp_mode, "warping": warping,
+            "slicing_style": slicing_style, "slicing_sensitivity": slicing_sensitivity,
+            "slicing_beat_division": slicing_beat_division,
+            "beats_granulation_resolution": beats_granulation_resolution,
+            "beats_transient_envelope": beats_transient_envelope,
+            "beats_transient_loop_mode": beats_transient_loop_mode,
+            "complex_pro_formants": complex_pro_formants,
+            "complex_pro_envelope": complex_pro_envelope,
+            "texture_grain_size": texture_grain_size, "texture_flux": texture_flux,
+            "tones_grain_size": tones_grain_size,
+        }
+        for k, v in local_vars.items():
+            if v is not None:
+                params[k] = v
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_simpler_properties", params)
+        device_name = result.get("device_name", "?")
+        changes = [f"{k}={v}" for k, v in result.items()
+                   if k not in ("track_index", "device_index", "device_name")]
+        return f"Simpler '{device_name}' updated: {', '.join(changes) if changes else 'no changes'}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting Simpler properties: {str(e)}"
+
+
+@mcp.tool()
+def simpler_sample_action(ctx: Context, track_index: int, device_index: int,
+                           action: str, beats: float = None) -> str:
+    """Perform an action on a Simpler device's loaded sample.
+
+    Parameters:
+    - track_index: The track containing the Simpler
+    - device_index: The Simpler device index
+    - action: 'reverse' (reverse the sample), 'crop' (crop to start/end markers),
+              'warp_as' (warp sample to specified beat count), 'warp_double' (double the warp length),
+              'warp_half' (halve the warp length)
+    - beats: Required for 'warp_as' — number of beats to warp the sample to
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        if action not in ("reverse", "crop", "warp_as", "warp_double", "warp_half"):
+            return "action must be 'reverse', 'crop', 'warp_as', 'warp_double', or 'warp_half'"
+        params = {"track_index": track_index, "device_index": device_index, "action": action}
+        if beats is not None:
+            params["beats"] = beats
+        ableton = get_ableton_connection()
+        result = ableton.send_command("simpler_sample_action", params)
+        device_name = result.get("device_name", "?")
+        return f"Simpler '{device_name}': {action} completed"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error performing Simpler action: {str(e)}"
+
+
+@mcp.tool()
+def manage_sample_slices(ctx: Context, track_index: int, device_index: int,
+                          action: str, slice_time: int = None,
+                          new_time: int = None) -> str:
+    """Manage slice points on a Simpler device's sample.
+
+    Parameters:
+    - track_index: The track containing the Simpler
+    - device_index: The Simpler device index
+    - action: 'insert' (add a slice at slice_time), 'move' (move slice from slice_time to new_time),
+              'remove' (remove slice at slice_time), 'clear' (remove all slices), 'reset' (reset to default slices)
+    - slice_time: Required for insert, move, remove — the slice time position in sample time
+    - new_time: Required for move — the destination time position
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        if action not in ("insert", "move", "remove", "clear", "reset"):
+            return "action must be 'insert', 'move', 'remove', 'clear', or 'reset'"
+        params = {"track_index": track_index, "device_index": device_index, "action": action}
+        if slice_time is not None:
+            params["slice_time"] = slice_time
+        if new_time is not None:
+            params["new_time"] = new_time
+        ableton = get_ableton_connection()
+        result = ableton.send_command("manage_sample_slices", params)
+        device_name = result.get("device_name", "?")
+        count = result.get("slice_count", "?")
+        return f"Simpler '{device_name}': {action} done ({count} slices)"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error managing sample slices: {str(e)}"
+
+
+# --- Browser Preview ---
+
+
+@mcp.tool()
+def preview_browser_item(ctx: Context, uri: str = None, action: str = "preview") -> str:
+    """Preview (audition) a browser item before loading it, or stop the current preview.
+
+    Parameters:
+    - uri: The URI of the browser item to preview (required for 'preview' action).
+           Use search_browser or get_browser_tree to find URIs.
+    - action: 'preview' to start previewing, 'stop' to stop the current preview. Default: 'preview'
+    """
+    try:
+        if action not in ("preview", "stop"):
+            return "action must be 'preview' or 'stop'"
+        params = {"action": action}
+        if uri is not None:
+            params["uri"] = uri
+        ableton = get_ableton_connection()
+        result = ableton.send_command("preview_browser_item", params)
+        if action == "stop":
+            return "Preview stopped"
+        name = result.get("name", "?")
+        return f"Previewing: '{name}'"
+    except Exception as e:
+        return f"Error previewing browser item: {str(e)}"
 
 
 # Main execution

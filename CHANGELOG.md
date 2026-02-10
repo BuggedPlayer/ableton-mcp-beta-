@@ -4,6 +4,31 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.2.0 — 2026-02-10
+
+### New: Track Metering & Crossfade (3 tools)
+- `get_track_meters` — read output meter levels (left/right), playing slot index, and fired slot index for one or all tracks
+- `set_track_fold` — collapse/expand group tracks (checks `is_foldable` first)
+- `set_crossfade_assign` — set A/B crossfade assignment per track (0=NONE, 1=A, 2=B)
+
+### New: Clip Region & Grid (3 tools)
+- `duplicate_clip_region` — duplicate a region of notes within a MIDI clip with optional pitch transposition
+- `move_clip_playing_pos` — jump to a position within a currently playing clip
+- `set_clip_grid` — set clip view grid quantization and triplet mode
+
+### New: Simpler & Sample (TCP) (4 tools)
+- `get_simpler_properties` — read Simpler device state: playback mode, voices, retrigger, slicing mode, plus full sample info (markers, gain, warp mode, warp params, slicing config, slices, file path)
+- `set_simpler_properties` — set Simpler device and sample properties (21 parameters: playback mode, voices, sample markers, gain, warp mode, 8 warp-mode-specific params, slicing config)
+- `simpler_sample_action` — perform sample operations: reverse, crop, warp_as (beats), warp_double, warp_half
+- `manage_sample_slices` — manage Simpler slices: insert, move, remove, clear, reset
+
+### New: Browser Preview (1 tool)
+- `preview_browser_item` — audition a browser item by URI, or stop the current preview
+
+### Total tools: 175 → **186** (+11 new)
+
+---
+
 ## v2.1.0 — 2026-02-10
 
 ### New: Song Settings & Navigation (4 tools)

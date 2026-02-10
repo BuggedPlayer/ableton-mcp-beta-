@@ -429,6 +429,72 @@ def create_midi_track_with_simpler(song, track_index, clip_index, ctrl=None):
         raise
 
 
+def get_track_meters(song, track_index=None, ctrl=None):
+    """Get live output meter levels and playing slot info for one or all tracks."""
+    try:
+        tracks_data = []
+        if track_index is not None:
+            if track_index < 0 or track_index >= len(song.tracks):
+                raise IndexError("Track index out of range")
+            indices = [track_index]
+        else:
+            indices = range(len(song.tracks))
+        for i in indices:
+            track = song.tracks[i]
+            info = {
+                "index": i,
+                "name": track.name,
+            }
+            try:
+                info["output_meter_left"] = round(track.output_meter_left, 4)
+                info["output_meter_right"] = round(track.output_meter_right, 4)
+            except Exception:
+                try:
+                    info["output_meter_level"] = round(track.output_meter_level, 4)
+                except Exception:
+                    info["output_meter_level"] = None
+            try:
+                info["playing_slot_index"] = track.playing_slot_index
+            except Exception:
+                info["playing_slot_index"] = -1
+            try:
+                info["fired_slot_index"] = track.fired_slot_index
+            except Exception:
+                info["fired_slot_index"] = -1
+            tracks_data.append(info)
+        if track_index is not None:
+            return tracks_data[0]
+        return {"tracks": tracks_data, "count": len(tracks_data)}
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting track meters: " + str(e))
+        raise
+
+
+def set_track_fold(song, track_index, fold_state, ctrl=None):
+    """Collapse or expand a group track.
+
+    Args:
+        fold_state: True to fold (collapse), False to unfold (expand).
+    """
+    try:
+        if track_index < 0 or track_index >= len(song.tracks):
+            raise IndexError("Track index out of range")
+        track = song.tracks[track_index]
+        if not track.is_foldable:
+            raise Exception("Track '{0}' is not a group track (not foldable)".format(track.name))
+        track.fold_state = bool(fold_state)
+        return {
+            "track_index": track_index,
+            "track_name": track.name,
+            "fold_state": track.fold_state,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting track fold: " + str(e))
+        raise
+
+
 def set_track_routing(song, track_index, input_type=None, input_channel=None,
                       output_type=None, output_channel=None, ctrl=None):
     """Set track input/output routing by display name.

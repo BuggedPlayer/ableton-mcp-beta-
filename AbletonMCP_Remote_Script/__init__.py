@@ -46,6 +46,7 @@ MODIFYING_COMMANDS = {
     "set_track_color", "arm_track", "disarm_track", "group_tracks",
     "set_track_routing", "set_track_monitoring",
     "create_midi_track_with_simpler",
+    "set_track_fold",
     # clips
     "create_clip", "add_notes_to_clip", "set_clip_name",
     "fire_clip", "stop_clip", "delete_clip",
@@ -53,12 +54,14 @@ MODIFYING_COMMANDS = {
     "set_clip_color", "crop_clip", "duplicate_clip_loop", "set_clip_start_end",
     "set_clip_pitch", "set_clip_launch_mode",
     "set_clip_launch_quantization", "set_clip_legato", "audio_to_midi",
+    "duplicate_clip_region", "move_clip_playing_pos", "set_clip_grid",
     # mixer
     "set_track_volume", "set_track_pan", "set_track_mute", "set_track_solo",
     "set_track_arm", "set_track_send",
     "set_return_track_volume", "set_return_track_pan",
     "set_return_track_mute", "set_return_track_solo",
     "set_master_volume",
+    "set_crossfade_assign",
     # scenes
     "create_scene", "delete_scene", "duplicate_scene",
     "fire_scene", "set_scene_name", "set_scene_tempo",
@@ -68,8 +71,10 @@ MODIFYING_COMMANDS = {
     "rack_variation_action", "sliced_simpler_to_drum_rack",
     "set_compressor_sidechain", "set_eq8_properties", "set_hybrid_reverb_ir",
     "set_transmute_properties",
+    "set_simpler_properties", "simpler_sample_action", "manage_sample_slices",
     # browser
     "load_browser_item", "load_instrument_or_effect", "load_sample",
+    "preview_browser_item",
     # midi
     "add_notes_extended", "remove_notes_range", "clear_clip_notes",
     "quantize_clip_notes", "transpose_clip_notes",
@@ -94,6 +99,7 @@ READ_ONLY_COMMANDS = {
     # tracks
     "get_track_info", "get_all_tracks_info", "get_return_tracks_info",
     "get_track_routing",
+    "get_track_meters",
     # clips
     "get_clip_info",
     # mixer
@@ -104,6 +110,7 @@ READ_ONLY_COMMANDS = {
     "get_drum_pads", "get_rack_variations",
     "get_compressor_sidechain", "get_eq8_properties", "get_hybrid_reverb_ir",
     "get_transmute_properties",
+    "get_simpler_properties",
     # browser
     "get_browser_item", "get_browser_tree", "get_browser_items_at_path",
     "search_browser", "get_user_library", "get_user_folders",
@@ -503,6 +510,8 @@ class AbletonMCP(ControlSurface):
             return handlers.tracks.set_track_monitoring(song, p.get("track_index", 0), p.get("state", 1), ctrl)
         elif cmd == "create_midi_track_with_simpler":
             return handlers.tracks.create_midi_track_with_simpler(song, p.get("track_index", 0), p.get("clip_index", 0), ctrl)
+        elif cmd == "set_track_fold":
+            return handlers.tracks.set_track_fold(song, p.get("track_index", 0), p.get("fold_state", True), ctrl)
 
         # --- Clips ---
         elif cmd == "create_clip":
@@ -541,6 +550,20 @@ class AbletonMCP(ControlSurface):
             return handlers.clips.set_clip_legato(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("legato", False), ctrl)
         elif cmd == "audio_to_midi":
             return handlers.clips.audio_to_midi(song, p.get("track_index", 0), p.get("clip_index", 0), p.get("conversion_type", "melody"), ctrl)
+        elif cmd == "duplicate_clip_region":
+            return handlers.clips.duplicate_clip_region(
+                song, p.get("track_index", 0), p.get("clip_index", 0),
+                p.get("region_start", 0.0), p.get("region_length", 4.0),
+                p.get("destination_time", 0.0), p.get("pitch", -1),
+                p.get("transposition_amount", 0), ctrl)
+        elif cmd == "move_clip_playing_pos":
+            return handlers.clips.move_clip_playing_pos(
+                song, p.get("track_index", 0), p.get("clip_index", 0),
+                p.get("time", 0.0), ctrl)
+        elif cmd == "set_clip_grid":
+            return handlers.clips.set_clip_grid(
+                song, p.get("track_index", 0), p.get("clip_index", 0),
+                p.get("grid_quantization"), p.get("grid_is_triplet"), ctrl)
 
         # --- Mixer ---
         elif cmd == "set_track_volume":
@@ -565,6 +588,8 @@ class AbletonMCP(ControlSurface):
             return handlers.mixer.set_return_track_solo(song, p.get("return_track_index", 0), p.get("solo", False), ctrl)
         elif cmd == "set_master_volume":
             return handlers.mixer.set_master_volume(song, p.get("volume", 0.85), ctrl)
+        elif cmd == "set_crossfade_assign":
+            return handlers.mixer.set_crossfade_assign(song, p.get("track_index", 0), p.get("assign", 0), ctrl)
 
         # --- Scenes ---
         elif cmd == "create_scene":
@@ -633,6 +658,29 @@ class AbletonMCP(ControlSurface):
                 p.get("mod_mode_index"), p.get("mono_poly_index"),
                 p.get("midi_gate_index"), p.get("polyphony"),
                 p.get("pitch_bend_range"), ctrl)
+        elif cmd == "set_simpler_properties":
+            return handlers.devices.set_simpler_properties(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("playback_mode"), p.get("voices"), p.get("retrigger"),
+                p.get("slicing_playback_mode"),
+                p.get("start_marker"), p.get("end_marker"), p.get("gain"),
+                p.get("warp_mode"), p.get("warping"),
+                p.get("slicing_style"), p.get("slicing_sensitivity"),
+                p.get("slicing_beat_division"),
+                p.get("beats_granulation_resolution"),
+                p.get("beats_transient_envelope"),
+                p.get("beats_transient_loop_mode"),
+                p.get("complex_pro_formants"), p.get("complex_pro_envelope"),
+                p.get("texture_grain_size"), p.get("texture_flux"),
+                p.get("tones_grain_size"), ctrl)
+        elif cmd == "simpler_sample_action":
+            return handlers.devices.simpler_sample_action(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("action", "reverse"), p.get("beats"), ctrl)
+        elif cmd == "manage_sample_slices":
+            return handlers.devices.manage_sample_slices(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("action", "insert"), p.get("slice_time"), p.get("new_time"), ctrl)
 
         # --- Browser ---
         elif cmd == "load_browser_item":
@@ -641,6 +689,8 @@ class AbletonMCP(ControlSurface):
             return handlers.browser.load_instrument_or_effect(song, p.get("track_index", 0), p.get("uri", ""), ctrl)
         elif cmd == "load_sample":
             return handlers.browser.load_sample(song, p.get("track_index", 0), p.get("sample_uri", ""), ctrl)
+        elif cmd == "preview_browser_item":
+            return handlers.browser.preview_browser_item(song, p.get("uri"), p.get("action", "preview"), ctrl)
 
         # --- MIDI ---
         elif cmd == "add_notes_extended":
@@ -739,6 +789,8 @@ class AbletonMCP(ControlSurface):
             return handlers.tracks.get_return_tracks_info(song, ctrl)
         elif cmd == "get_track_routing":
             return handlers.tracks.get_track_routing(song, p.get("track_index", 0), ctrl)
+        elif cmd == "get_track_meters":
+            return handlers.tracks.get_track_meters(song, p.get("track_index"), ctrl)
 
         # --- Clips ---
         elif cmd == "get_clip_info":
@@ -776,6 +828,9 @@ class AbletonMCP(ControlSurface):
                 song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
         elif cmd == "get_transmute_properties":
             return handlers.devices.get_transmute_properties(
+                song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "get_simpler_properties":
+            return handlers.devices.get_simpler_properties(
                 song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
 
         # --- Browser ---

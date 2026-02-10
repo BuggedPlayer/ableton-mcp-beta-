@@ -504,6 +504,89 @@ def audio_to_midi(song, track_index, clip_index, conversion_type, ctrl=None):
         raise
 
 
+def duplicate_clip_region(song, track_index, clip_index,
+                          region_start, region_length, destination_time,
+                          pitch=-1, transposition_amount=0, ctrl=None):
+    """Duplicate notes in a region to another position, with optional transposition.
+
+    MIDI clips only. If pitch is -1, all notes in the region are duplicated.
+
+    Args:
+        region_start: Start time of the region to duplicate.
+        region_length: Length of the region.
+        destination_time: Where to place the duplicated notes.
+        pitch: Only duplicate notes at this pitch (-1 for all).
+        transposition_amount: Semitones to transpose (0 for none).
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        if clip.is_audio_clip:
+            raise ValueError("duplicate_region is only available for MIDI clips")
+        clip.duplicate_region(float(region_start), float(region_length),
+                              float(destination_time), int(pitch), int(transposition_amount))
+        return {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "region_start": region_start,
+            "region_length": region_length,
+            "destination_time": destination_time,
+            "pitch": pitch,
+            "transposition_amount": transposition_amount,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error duplicating clip region: " + str(e))
+        raise
+
+
+def move_clip_playing_pos(song, track_index, clip_index, time, ctrl=None):
+    """Jump to a position within a currently playing clip.
+
+    Args:
+        time: The time position to jump to within the clip.
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        clip.move_playing_pos(float(time))
+        return {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "position": float(time),
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error moving clip playing position: " + str(e))
+        raise
+
+
+def set_clip_grid(song, track_index, clip_index,
+                   grid_quantization=None, grid_is_triplet=None, ctrl=None):
+    """Set the MIDI editor grid resolution for a clip.
+
+    Args:
+        grid_quantization: Grid resolution value (enum int from Clip.grid_quantization).
+        grid_is_triplet: True to show grid in triplet mode, False for standard.
+    """
+    try:
+        clip = _get_clip(song, track_index, clip_index)
+        changes = {}
+        if grid_quantization is not None:
+            clip.view.grid_quantization = int(grid_quantization)
+            changes["grid_quantization"] = int(grid_quantization)
+        if grid_is_triplet is not None:
+            clip.view.grid_is_triplet = bool(grid_is_triplet)
+            changes["grid_is_triplet"] = bool(grid_is_triplet)
+        if not changes:
+            raise ValueError("No parameters specified")
+        changes["track_index"] = track_index
+        changes["clip_index"] = clip_index
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting clip grid: " + str(e))
+        raise
+
+
 # --- Helper ---
 
 

@@ -993,3 +993,279 @@ def set_transmute_properties(song, track_index, device_index,
         if ctrl:
             ctrl.log_message("Error setting Transmute properties: " + str(e))
         raise
+
+
+# --- Simpler / Sample Controls ---
+
+
+def _get_simpler_device(song, track_index, device_index):
+    """Resolve a Simpler device, raising if not found or wrong type."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if device_index < 0 or device_index >= len(track.devices):
+        raise IndexError("Device index out of range")
+    device = track.devices[device_index]
+    if "simpler" not in device.class_name.lower():
+        raise Exception("Device '{0}' is not a Simpler (class: {1})".format(
+            device.name, device.class_name))
+    return device
+
+
+def get_simpler_properties(song, track_index, device_index, ctrl=None):
+    """Get Simpler device and its sample properties."""
+    try:
+        device = _get_simpler_device(song, track_index, device_index)
+        result = {
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+        }
+        # Device-level properties
+        for prop in ("playback_mode", "voices", "retrigger"):
+            try:
+                val = getattr(device, prop)
+                result[prop] = int(val) if isinstance(val, (int, float, bool)) or hasattr(val, '__int__') else str(val)
+            except Exception:
+                result[prop] = None
+        try:
+            result["slicing_playback_mode"] = int(device.slicing_playback_mode)
+        except Exception:
+            result["slicing_playback_mode"] = None
+
+        # Sample properties
+        sample = getattr(device, "sample", None)
+        if sample is None:
+            result["sample"] = None
+            return result
+        sample_data = {}
+        for prop in ("start_marker", "end_marker", "gain", "warp_mode", "warping",
+                      "slicing_style", "slicing_sensitivity", "slicing_beat_division"):
+            try:
+                val = getattr(sample, prop)
+                if isinstance(val, bool):
+                    sample_data[prop] = val
+                elif isinstance(val, (int, float)):
+                    sample_data[prop] = val
+                elif hasattr(val, '__int__'):
+                    sample_data[prop] = int(val)
+                else:
+                    sample_data[prop] = str(val)
+            except Exception:
+                sample_data[prop] = None
+        try:
+            sample_data["file_path"] = str(sample.file_path)
+        except Exception:
+            sample_data["file_path"] = None
+        try:
+            sample_data["length"] = int(sample.length)
+        except Exception:
+            sample_data["length"] = None
+        try:
+            sample_data["sample_rate"] = getattr(sample, "sample_rate", None)
+        except Exception:
+            sample_data["sample_rate"] = None
+        try:
+            sample_data["slices"] = [int(s) for s in sample.slices]
+        except Exception:
+            sample_data["slices"] = []
+        # Warp params
+        for prop in ("beats_granulation_resolution", "beats_transient_envelope",
+                      "beats_transient_loop_mode", "complex_pro_formants",
+                      "complex_pro_envelope", "texture_grain_size",
+                      "texture_flux", "tones_grain_size"):
+            try:
+                val = getattr(sample, prop)
+                if hasattr(val, '__int__'):
+                    sample_data[prop] = int(val)
+                elif isinstance(val, float):
+                    sample_data[prop] = val
+                else:
+                    sample_data[prop] = str(val)
+            except Exception:
+                sample_data[prop] = None
+        result["sample"] = sample_data
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting Simpler properties: " + str(e))
+        raise
+
+
+def set_simpler_properties(song, track_index, device_index,
+                            playback_mode=None, voices=None, retrigger=None,
+                            slicing_playback_mode=None,
+                            start_marker=None, end_marker=None, gain=None,
+                            warp_mode=None, warping=None,
+                            slicing_style=None, slicing_sensitivity=None,
+                            slicing_beat_division=None,
+                            beats_granulation_resolution=None,
+                            beats_transient_envelope=None,
+                            beats_transient_loop_mode=None,
+                            complex_pro_formants=None, complex_pro_envelope=None,
+                            texture_grain_size=None, texture_flux=None,
+                            tones_grain_size=None, ctrl=None):
+    """Set Simpler device and sample properties."""
+    try:
+        device = _get_simpler_device(song, track_index, device_index)
+        changes = {}
+        # Device-level
+        if playback_mode is not None:
+            device.playback_mode = int(playback_mode)
+            changes["playback_mode"] = int(playback_mode)
+        if voices is not None:
+            device.voices = int(voices)
+            changes["voices"] = int(voices)
+        if retrigger is not None:
+            device.retrigger = bool(retrigger)
+            changes["retrigger"] = bool(retrigger)
+        if slicing_playback_mode is not None:
+            device.slicing_playback_mode = int(slicing_playback_mode)
+            changes["slicing_playback_mode"] = int(slicing_playback_mode)
+        # Sample-level
+        sample = getattr(device, "sample", None)
+        if sample is not None:
+            if start_marker is not None:
+                sample.start_marker = int(start_marker)
+                changes["start_marker"] = int(start_marker)
+            if end_marker is not None:
+                sample.end_marker = int(end_marker)
+                changes["end_marker"] = int(end_marker)
+            if gain is not None:
+                sample.gain = float(gain)
+                changes["gain"] = float(gain)
+            if warp_mode is not None:
+                sample.warp_mode = int(warp_mode)
+                changes["warp_mode"] = int(warp_mode)
+            if warping is not None:
+                sample.warping = bool(warping)
+                changes["warping"] = bool(warping)
+            if slicing_style is not None:
+                sample.slicing_style = int(slicing_style)
+                changes["slicing_style"] = int(slicing_style)
+            if slicing_sensitivity is not None:
+                sample.slicing_sensitivity = float(slicing_sensitivity)
+                changes["slicing_sensitivity"] = float(slicing_sensitivity)
+            if slicing_beat_division is not None:
+                sample.slicing_beat_division = int(slicing_beat_division)
+                changes["slicing_beat_division"] = int(slicing_beat_division)
+            # Warp params
+            if beats_granulation_resolution is not None:
+                sample.beats_granulation_resolution = int(beats_granulation_resolution)
+                changes["beats_granulation_resolution"] = int(beats_granulation_resolution)
+            if beats_transient_envelope is not None:
+                sample.beats_transient_envelope = float(beats_transient_envelope)
+                changes["beats_transient_envelope"] = float(beats_transient_envelope)
+            if beats_transient_loop_mode is not None:
+                sample.beats_transient_loop_mode = int(beats_transient_loop_mode)
+                changes["beats_transient_loop_mode"] = int(beats_transient_loop_mode)
+            if complex_pro_formants is not None:
+                sample.complex_pro_formants = float(complex_pro_formants)
+                changes["complex_pro_formants"] = float(complex_pro_formants)
+            if complex_pro_envelope is not None:
+                sample.complex_pro_envelope = float(complex_pro_envelope)
+                changes["complex_pro_envelope"] = float(complex_pro_envelope)
+            if texture_grain_size is not None:
+                sample.texture_grain_size = float(texture_grain_size)
+                changes["texture_grain_size"] = float(texture_grain_size)
+            if texture_flux is not None:
+                sample.texture_flux = float(texture_flux)
+                changes["texture_flux"] = float(texture_flux)
+            if tones_grain_size is not None:
+                sample.tones_grain_size = float(tones_grain_size)
+                changes["tones_grain_size"] = float(tones_grain_size)
+        changes["device_name"] = device.name
+        changes["track_index"] = track_index
+        changes["device_index"] = device_index
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting Simpler properties: " + str(e))
+        raise
+
+
+def simpler_sample_action(song, track_index, device_index, action, beats=None, ctrl=None):
+    """Perform an action on a Simpler device's sample.
+
+    Args:
+        action: 'reverse', 'crop', 'warp_as', 'warp_double', or 'warp_half'
+        beats: Required for 'warp_as' — number of beats to warp to.
+    """
+    try:
+        device = _get_simpler_device(song, track_index, device_index)
+        if action == "reverse":
+            device.reverse()
+        elif action == "crop":
+            device.crop()
+        elif action == "warp_as":
+            if beats is None:
+                raise ValueError("beats is required for warp_as")
+            device.warp_as(float(beats))
+        elif action == "warp_double":
+            device.warp_double()
+        elif action == "warp_half":
+            device.warp_half()
+        else:
+            raise ValueError(
+                "action must be 'reverse', 'crop', 'warp_as', 'warp_double', or 'warp_half', got '{0}'".format(action))
+        return {
+            "action": action,
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error performing Simpler action: " + str(e))
+        raise
+
+
+def manage_sample_slices(song, track_index, device_index, action,
+                          slice_time=None, new_time=None, ctrl=None):
+    """Manage slice points on a Simpler device's sample.
+
+    Args:
+        action: 'insert', 'move', 'remove', 'clear', or 'reset'
+        slice_time: Required for insert, move, remove — the slice time position.
+        new_time: Required for move — the new time position.
+    """
+    try:
+        device = _get_simpler_device(song, track_index, device_index)
+        sample = getattr(device, "sample", None)
+        if sample is None:
+            raise Exception("No sample loaded in Simpler '{0}'".format(device.name))
+        if action == "insert":
+            if slice_time is None:
+                raise ValueError("slice_time is required for insert")
+            sample.insert_slice(int(slice_time))
+        elif action == "move":
+            if slice_time is None or new_time is None:
+                raise ValueError("slice_time and new_time are required for move")
+            sample.move_slice(int(slice_time), int(new_time))
+        elif action == "remove":
+            if slice_time is None:
+                raise ValueError("slice_time is required for remove")
+            sample.remove_slice(int(slice_time))
+        elif action == "clear":
+            sample.clear_slices()
+        elif action == "reset":
+            sample.reset_slices()
+        else:
+            raise ValueError(
+                "action must be 'insert', 'move', 'remove', 'clear', or 'reset', got '{0}'".format(action))
+        try:
+            slices = [int(s) for s in sample.slices]
+        except Exception:
+            slices = []
+        return {
+            "action": action,
+            "device_name": device.name,
+            "slice_count": len(slices),
+            "slices": slices,
+            "track_index": track_index,
+            "device_index": device_index,
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error managing sample slices: " + str(e))
+        raise

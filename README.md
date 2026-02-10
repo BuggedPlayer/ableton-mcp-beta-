@@ -1,6 +1,6 @@
 # AbletonMCP
 
-**175 tools connecting Claude AI to Ableton Live**
+**186 tools connecting Claude AI to Ableton Live**
 
 AbletonMCP gives Claude direct control over your Ableton Live session through the Model Context Protocol. Create tracks, write MIDI, design sounds, mix, automate, browse instruments, snapshot presets, and navigate deep into device chains and modulation matrices — all through natural language conversation.
 
@@ -100,20 +100,20 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
                           +---<--HTTP:9880-->  Web Status Dashboard
 ```
 
-- **Remote Script** (TCP) — 162 tools. Runs as a Control Surface inside Ableton. Handles tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Compressor side-chain, EQ8, Hybrid Reverb, Transmute), song settings, view/selection, and navigation.
+- **Remote Script** (TCP) — 173 tools. Runs as a Control Surface inside Ableton. Handles tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Compressor side-chain, EQ8, Hybrid Reverb, Transmute, Simpler), song settings, view/selection, metering, and navigation.
 - **M4L Bridge** (UDP/OSC) — 13 tools. A Max for Live device that accesses hidden parameters, rack chain internals, Simpler sample data, and Wavetable modulation matrices.
 - **Web Dashboard** — real-time status, tool call metrics, and server logs at `http://127.0.0.1:9880`.
 
 ---
 
-## Tools by Category (175 Total)
+## Tools by Category (186 Total)
 
 | Category | Count | Channel |
 |---|---|---|
 | Session & Transport | 20 | TCP |
-| Track Management | 14 | TCP |
-| Track Mixing | 6 | TCP |
-| Clip Management | 19 | TCP |
+| Track Management | 16 | TCP |
+| Track Mixing | 7 | TCP |
+| Clip Management | 22 | TCP |
 | MIDI Notes | 8 | TCP |
 | Automation | 4 | TCP |
 | ASCII Grid Notation | 2 | TCP |
@@ -124,9 +124,9 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 | Scenes | 6 | TCP |
 | Return Tracks | 6 | TCP |
 | Master Track | 2 | TCP |
-| Devices & Parameters | 18 | TCP |
+| Devices & Parameters | 22 | TCP |
 | View & Selection | 3 | TCP |
-| Browser & Loading | 9 | TCP |
+| Browser & Loading | 10 | TCP |
 | Snapshot & Versioning | 9 | TCP |
 | Preset Morph | 1 | TCP |
 | Smart Macros | 4 | TCP |
@@ -134,7 +134,7 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 | Parameter Mapper | 4 | TCP |
 | Rack Presets | 1 | TCP |
 | Deep Device Access | 10 | UDP/OSC |
-| **Total** | **175** | |
+| **Total** | **186** | |
 
 ---
 
@@ -169,7 +169,7 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 ## Flexibility
 
 - **Works with any MCP client** — Claude Desktop, Cursor, or any tool that speaks the Model Context Protocol
-- **162 tools without Max for Live** — the TCP Remote Script covers tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls, song settings, view/selection, and navigation. M4L is optional.
+- **173 tools without Max for Live** — the TCP Remote Script covers tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Simpler, Transmute, Compressor, EQ8, Hybrid Reverb), song settings, view/selection, metering, and navigation. M4L is optional.
 - **+13 deep-access tools with M4L** — hidden parameters, rack chain internals, Simpler samples, Wavetable modulation
 - **Web dashboard** — live monitoring of connection status, tool calls, and server logs at port 9880
 - **Ableton Live 10, 11, and 12** — graceful API fallbacks for version-specific features (extended notes, capture MIDI, arrangement placement)
@@ -180,4 +180,4 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 
 ## Version
 
-**v2.1.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
+**v2.2.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
