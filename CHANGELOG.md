@@ -32,25 +32,33 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 ### New: Scene Tools (1 tool)
 - `set_scene_tempo` — set or clear per-scene tempo override (0 clears, 20-999 sets)
 
-### New: Device Tools (6 tools)
+### New: Device Tools (12 tools)
 - `get_drum_pads` — read all drum pad info (note, name, mute, solo) from a Drum Rack
 - `set_drum_pad` — mute/solo individual drum pads by MIDI note number
 - `copy_drum_pad` — copy pad contents from one note to another
 - `get_rack_variations` — read macro variation count, selected index, mapping status
 - `rack_variation_action` — store/recall/delete macro variations, randomize macros
 - `sliced_simpler_to_drum_rack` — convert sliced Simpler to Drum Rack (Live 12+)
+- `get_compressor_sidechain` — read Compressor side-chain routing and available sources
+- `set_compressor_sidechain` — set Compressor side-chain source by display name
+- `get_eq8_properties` — read EQ Eight edit mode (A/B), global mode (Stereo/L-R/M-S), oversample, selected band
+- `set_eq8_properties` — set EQ Eight edit mode, global mode, oversample, selected band
+- `get_hybrid_reverb_ir` — read Hybrid Reverb IR categories, files, selection, and time shaping
+- `set_hybrid_reverb_ir` — set Hybrid Reverb IR category, file, attack/decay/size/time shaping
 
 ### Remote Script Fixes
 - **`set_scene_tempo`**: Simplified to use `scene.tempo` API directly — 0 clears, 20-999 sets
 - **Variable cleanup**: `l` → `length_val` in `set_song_loop`; added `pos` in `set_loop_end`; removed double-logging in 3 session handlers
 - **`stop_arrangement_recording`**: Added optional `stop_playback` parameter
+- **`set_compressor_sidechain`**: Rewrote to use DeviceIO path (`device.input_routings[0]`) — CompressorDevice properties are read-only, DeviceIO `routing_type`/`routing_channel` are writable
+- **`_get_hybrid_reverb_device`**: Fixed class name check — Ableton reports `"Hybrid"` not `"HybridReverb"`
 
 ### M4L Bridge Fixes
 - **Response interleaving**: Small responses now queue behind active chunked sends
 - **`_batchProcessNextChunk`**: Wrapped in try/catch matching sibling functions
 - **ES5 compat**: Reverted `let` to `var` in case "move" for Max's JS engine
 
-### Total tools: 138 → **160** (+25 new, -3 already removed in v2.0.0)
+### Total tools: 138 → **166** (+31 new, -3 already removed in v2.0.0)
 
 ---
 

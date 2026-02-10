@@ -64,6 +64,7 @@ MODIFYING_COMMANDS = {
     "set_device_parameter", "set_device_parameters_batch", "delete_device",
     "set_macro_value", "set_drum_pad", "copy_drum_pad",
     "rack_variation_action", "sliced_simpler_to_drum_rack",
+    "set_compressor_sidechain", "set_eq8_properties", "set_hybrid_reverb_ir",
     # browser
     "load_browser_item", "load_instrument_or_effect", "load_sample",
     # midi
@@ -97,6 +98,7 @@ READ_ONLY_COMMANDS = {
     # devices
     "get_device_parameters", "get_macro_values",
     "get_drum_pads", "get_rack_variations",
+    "get_compressor_sidechain", "get_eq8_properties", "get_hybrid_reverb_ir",
     # browser
     "get_browser_item", "get_browser_tree", "get_browser_items_at_path",
     "search_browser", "get_user_library", "get_user_folders",
@@ -588,6 +590,21 @@ class AbletonMCP(ControlSurface):
         elif cmd == "sliced_simpler_to_drum_rack":
             return handlers.devices.sliced_simpler_to_drum_rack(
                 song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "set_compressor_sidechain":
+            return handlers.devices.set_compressor_sidechain(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("input_type"), p.get("input_channel"), ctrl)
+        elif cmd == "set_eq8_properties":
+            return handlers.devices.set_eq8_properties(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("edit_mode"), p.get("global_mode"),
+                p.get("oversample"), p.get("selected_band"), ctrl)
+        elif cmd == "set_hybrid_reverb_ir":
+            return handlers.devices.set_hybrid_reverb_ir(
+                song, p.get("track_index", 0), p.get("device_index", 0),
+                p.get("ir_category_index"), p.get("ir_file_index"),
+                p.get("ir_attack_time"), p.get("ir_decay_time"),
+                p.get("ir_size_factor"), p.get("ir_time_shaping_on"), ctrl)
 
         # --- Browser ---
         elif cmd == "load_browser_item":
@@ -718,6 +735,15 @@ class AbletonMCP(ControlSurface):
             return handlers.devices.get_drum_pads(song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
         elif cmd == "get_rack_variations":
             return handlers.devices.get_rack_variations(song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "get_compressor_sidechain":
+            return handlers.devices.get_compressor_sidechain(
+                song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "get_eq8_properties":
+            return handlers.devices.get_eq8_properties(
+                song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
+        elif cmd == "get_hybrid_reverb_ir":
+            return handlers.devices.get_hybrid_reverb_ir(
+                song, p.get("track_index", 0), p.get("device_index", 0), ctrl)
 
         # --- Browser ---
         elif cmd == "get_browser_item":

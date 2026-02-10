@@ -567,3 +567,332 @@ def sliced_simpler_to_drum_rack(song, track_index, device_index, ctrl=None):
         if ctrl:
             ctrl.log_message("Error converting Simpler to Drum Rack: " + str(e))
         raise
+
+
+# --- Compressor Side-Chain Routing ---
+
+
+def _get_compressor_device(song, track_index, device_index):
+    """Resolve a Compressor device, raising if not found or not a Compressor."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if device_index < 0 or device_index >= len(track.devices):
+        raise IndexError("Device index out of range")
+    device = track.devices[device_index]
+    if "compressor" not in device.class_name.lower():
+        raise Exception("Device '{0}' is not a Compressor (class: {1})".format(
+            device.name, device.class_name))
+    return device
+
+
+def _get_sidechain_io(device):
+    """Get the sidechain DeviceIO from a compressor, or None if unavailable.
+
+    The CompressorDevice exposes input_routing_type/channel as read-only.
+    The writable path is through device.input_routings[0] (a DeviceIO object)
+    whose routing_type and routing_channel ARE settable.
+    """
+    try:
+        if hasattr(device, 'input_routings') and len(device.input_routings) > 0:
+            return device.input_routings[0]
+    except Exception:
+        pass
+    return None
+
+
+def get_compressor_sidechain(song, track_index, device_index, ctrl=None):
+    """Get side-chain routing info from a Compressor device."""
+    try:
+        device = _get_compressor_device(song, track_index, device_index)
+        result = {
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+        }
+        sidechain_io = _get_sidechain_io(device)
+        if sidechain_io:
+            # Preferred: read from DeviceIO (also writable)
+            try:
+                result["input_routing_type"] = str(sidechain_io.routing_type.display_name)
+            except Exception:
+                result["input_routing_type"] = None
+            try:
+                result["input_routing_channel"] = str(sidechain_io.routing_channel.display_name)
+            except Exception:
+                result["input_routing_channel"] = None
+            try:
+                result["available_input_types"] = [
+                    str(r.display_name) for r in sidechain_io.available_routing_types
+                ]
+            except Exception:
+                result["available_input_types"] = []
+            try:
+                result["available_input_channels"] = [
+                    str(r.display_name) for r in sidechain_io.available_routing_channels
+                ]
+            except Exception:
+                result["available_input_channels"] = []
+            result["routing_via"] = "DeviceIO"
+        else:
+            # Fallback: read-only properties on CompressorDevice
+            try:
+                result["input_routing_type"] = str(device.input_routing_type.display_name)
+            except Exception:
+                result["input_routing_type"] = None
+            try:
+                result["input_routing_channel"] = str(device.input_routing_channel.display_name)
+            except Exception:
+                result["input_routing_channel"] = None
+            try:
+                result["available_input_types"] = [
+                    str(r.display_name) for r in device.available_input_routing_types
+                ]
+            except Exception:
+                result["available_input_types"] = []
+            try:
+                result["available_input_channels"] = [
+                    str(r.display_name) for r in device.available_input_routing_channels
+                ]
+            except Exception:
+                result["available_input_channels"] = []
+            result["routing_via"] = "CompressorDevice (read-only)"
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting compressor sidechain: " + str(e))
+        raise
+
+
+def set_compressor_sidechain(song, track_index, device_index,
+                              input_type=None, input_channel=None, ctrl=None):
+    """Set side-chain routing on a Compressor device by display name.
+
+    Uses the DeviceIO path (device.input_routings[0]) which exposes writable
+    routing_type/routing_channel, unlike the read-only properties on
+    CompressorDevice itself.
+    """
+    try:
+        device = _get_compressor_device(song, track_index, device_index)
+        sidechain_io = _get_sidechain_io(device)
+        if sidechain_io is None:
+            raise Exception(
+                "Cannot access sidechain routing on '{0}'. "
+                "The device does not expose input_routings (DeviceIO).".format(device.name))
+        changes = {}
+        if input_type is not None:
+            for rt in sidechain_io.available_routing_types:
+                if str(rt.display_name) == input_type:
+                    sidechain_io.routing_type = rt
+                    changes["input_routing_type"] = input_type
+                    break
+            else:
+                avail = ", ".join(str(r.display_name) for r in sidechain_io.available_routing_types)
+                raise ValueError("Input type '{0}' not found. Available: {1}".format(input_type, avail))
+        if input_channel is not None:
+            for ch in sidechain_io.available_routing_channels:
+                if str(ch.display_name) == input_channel:
+                    sidechain_io.routing_channel = ch
+                    changes["input_routing_channel"] = input_channel
+                    break
+            else:
+                avail = ", ".join(str(r.display_name) for r in sidechain_io.available_routing_channels)
+                raise ValueError("Input channel '{0}' not found. Available: {1}".format(input_channel, avail))
+        changes["device_name"] = device.name
+        changes["track_index"] = track_index
+        changes["device_index"] = device_index
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting compressor sidechain: " + str(e))
+        raise
+
+
+# --- EQ8 Controls ---
+
+
+def _get_eq8_device(song, track_index, device_index):
+    """Resolve an EQ Eight device, raising if not found or not an EQ Eight."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if device_index < 0 or device_index >= len(track.devices):
+        raise IndexError("Device index out of range")
+    device = track.devices[device_index]
+    if "eq8" not in device.class_name.lower():
+        raise Exception("Device '{0}' is not an EQ Eight (class: {1})".format(
+            device.name, device.class_name))
+    return device
+
+
+def get_eq8_properties(song, track_index, device_index, ctrl=None):
+    """Get EQ8-specific properties: edit_mode, global_mode, oversample, selected_band."""
+    try:
+        device = _get_eq8_device(song, track_index, device_index)
+        result = {
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+        }
+        try:
+            result["edit_mode"] = int(device.edit_mode)
+        except Exception:
+            result["edit_mode"] = None
+        try:
+            result["global_mode"] = int(device.global_mode)
+        except Exception:
+            result["global_mode"] = None
+        try:
+            result["oversample"] = bool(device.oversample)
+        except Exception:
+            result["oversample"] = None
+        try:
+            result["selected_band"] = int(device.view.selected_band)
+        except Exception:
+            result["selected_band"] = None
+        result["edit_mode_labels"] = {0: "a", 1: "b"}
+        result["global_mode_labels"] = {0: "stereo", 1: "left_right", 2: "mid_side"}
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting EQ8 properties: " + str(e))
+        raise
+
+
+def set_eq8_properties(song, track_index, device_index,
+                        edit_mode=None, global_mode=None,
+                        oversample=None, selected_band=None, ctrl=None):
+    """Set EQ8-specific properties."""
+    try:
+        device = _get_eq8_device(song, track_index, device_index)
+        changes = {}
+        if edit_mode is not None:
+            edit_mode = int(edit_mode)
+            if edit_mode not in (0, 1):
+                raise ValueError("edit_mode must be 0 (a) or 1 (b)")
+            device.edit_mode = edit_mode
+            changes["edit_mode"] = edit_mode
+        if global_mode is not None:
+            global_mode = int(global_mode)
+            if global_mode not in (0, 1, 2):
+                raise ValueError("global_mode must be 0 (stereo), 1 (left_right), or 2 (mid_side)")
+            device.global_mode = global_mode
+            changes["global_mode"] = global_mode
+        if oversample is not None:
+            device.oversample = bool(oversample)
+            changes["oversample"] = bool(oversample)
+        if selected_band is not None:
+            selected_band = int(selected_band)
+            if selected_band < 0 or selected_band > 7:
+                raise ValueError("selected_band must be 0-7")
+            device.view.selected_band = selected_band
+            changes["selected_band"] = selected_band
+        changes["device_name"] = device.name
+        changes["track_index"] = track_index
+        changes["device_index"] = device_index
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting EQ8 properties: " + str(e))
+        raise
+
+
+# --- Hybrid Reverb IR ---
+
+
+def _get_hybrid_reverb_device(song, track_index, device_index):
+    """Resolve a Hybrid Reverb device, raising if not found or wrong type."""
+    if track_index < 0 or track_index >= len(song.tracks):
+        raise IndexError("Track index out of range")
+    track = song.tracks[track_index]
+    if device_index < 0 or device_index >= len(track.devices):
+        raise IndexError("Device index out of range")
+    device = track.devices[device_index]
+    if "hybrid" not in device.class_name.lower():
+        raise Exception("Device '{0}' is not a Hybrid Reverb (class: {1})".format(
+            device.name, device.class_name))
+    return device
+
+
+def get_hybrid_reverb_ir(song, track_index, device_index, ctrl=None):
+    """Get IR configuration from a Hybrid Reverb device."""
+    try:
+        device = _get_hybrid_reverb_device(song, track_index, device_index)
+        result = {
+            "device_name": device.name,
+            "track_index": track_index,
+            "device_index": device_index,
+        }
+        try:
+            result["ir_category_index"] = int(device.ir_category_index)
+        except Exception:
+            result["ir_category_index"] = None
+        try:
+            result["ir_category_list"] = [str(c) for c in device.ir_category_list]
+        except Exception:
+            result["ir_category_list"] = []
+        try:
+            result["ir_file_index"] = int(device.ir_file_index)
+        except Exception:
+            result["ir_file_index"] = None
+        try:
+            result["ir_file_list"] = [str(f) for f in device.ir_file_list]
+        except Exception:
+            result["ir_file_list"] = []
+        try:
+            result["ir_attack_time"] = float(device.ir_attack_time)
+        except Exception:
+            result["ir_attack_time"] = None
+        try:
+            result["ir_decay_time"] = float(device.ir_decay_time)
+        except Exception:
+            result["ir_decay_time"] = None
+        try:
+            result["ir_size_factor"] = float(device.ir_size_factor)
+        except Exception:
+            result["ir_size_factor"] = None
+        try:
+            result["ir_time_shaping_on"] = bool(device.ir_time_shaping_on)
+        except Exception:
+            result["ir_time_shaping_on"] = None
+        return result
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error getting Hybrid Reverb IR: " + str(e))
+        raise
+
+
+def set_hybrid_reverb_ir(song, track_index, device_index,
+                          ir_category_index=None, ir_file_index=None,
+                          ir_attack_time=None, ir_decay_time=None,
+                          ir_size_factor=None, ir_time_shaping_on=None, ctrl=None):
+    """Set IR configuration on a Hybrid Reverb device."""
+    try:
+        device = _get_hybrid_reverb_device(song, track_index, device_index)
+        changes = {}
+        if ir_category_index is not None:
+            device.ir_category_index = int(ir_category_index)
+            changes["ir_category_index"] = int(ir_category_index)
+        if ir_file_index is not None:
+            device.ir_file_index = int(ir_file_index)
+            changes["ir_file_index"] = int(ir_file_index)
+        if ir_attack_time is not None:
+            device.ir_attack_time = float(ir_attack_time)
+            changes["ir_attack_time"] = float(ir_attack_time)
+        if ir_decay_time is not None:
+            device.ir_decay_time = float(ir_decay_time)
+            changes["ir_decay_time"] = float(ir_decay_time)
+        if ir_size_factor is not None:
+            device.ir_size_factor = float(ir_size_factor)
+            changes["ir_size_factor"] = float(ir_size_factor)
+        if ir_time_shaping_on is not None:
+            device.ir_time_shaping_on = bool(ir_time_shaping_on)
+            changes["ir_time_shaping_on"] = bool(ir_time_shaping_on)
+        changes["device_name"] = device.name
+        changes["track_index"] = track_index
+        changes["device_index"] = device_index
+        return changes
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting Hybrid Reverb IR: " + str(e))
+        raise

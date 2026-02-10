@@ -135,6 +135,7 @@ class AbletonConnection:
         "sliced_simpler_to_drum_rack", "set_scene_tempo",
         "undo", "redo", "set_track_routing", "set_clip_pitch", "set_clip_launch_mode",
         "set_or_delete_cue", "jump_to_cue",
+        "set_compressor_sidechain", "set_eq8_properties", "set_hybrid_reverb_ir",
     ])
 
     def send_command(self, command_type: str, params: Dict[str, Any] = None, timeout: float = None) -> Dict[str, Any]:
@@ -6728,6 +6729,217 @@ def sliced_simpler_to_drum_rack(ctx: Context, track_index: int, device_index: in
         return f"Invalid input: {e}"
     except Exception as e:
         return f"Error converting Simpler to Drum Rack: {str(e)}"
+
+
+@mcp.tool()
+def get_compressor_sidechain(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get side-chain routing info for a Compressor device.
+
+    Parameters:
+    - track_index: The index of the track containing the Compressor
+    - device_index: The index of the Compressor device on the track
+
+    Returns the current side-chain input routing type and channel, plus lists
+    of all available input routing options. The device must be a Compressor.
+    Use this before set_compressor_sidechain to see available routing options.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_compressor_sidechain", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting compressor sidechain: {str(e)}"
+
+
+@mcp.tool()
+def set_compressor_sidechain(ctx: Context, track_index: int, device_index: int,
+                              input_type: str = None, input_channel: str = None) -> str:
+    """Set side-chain routing on a Compressor device by display name.
+
+    Parameters:
+    - track_index: The index of the track containing the Compressor
+    - device_index: The index of the Compressor device on the track
+    - input_type: Side-chain source type display name (e.g. a track name, 'Ext. In'). Optional.
+    - input_channel: Side-chain source channel display name (e.g. 'Post FX', 'Pre FX'). Optional.
+
+    The device must be a Compressor. Use get_compressor_sidechain first to see
+    available routing options. At least one of input_type or input_channel should be provided.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        params = {"track_index": track_index, "device_index": device_index}
+        if input_type is not None:
+            params["input_type"] = input_type
+        if input_channel is not None:
+            params["input_channel"] = input_channel
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_compressor_sidechain", params)
+        changes = [f"{k}={v}" for k, v in result.items()
+                   if k not in ("track_index", "device_index", "device_name")]
+        device_name = result.get("device_name", "?")
+        return f"Compressor '{device_name}' sidechain updated: {', '.join(changes) if changes else 'no changes'}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting compressor sidechain: {str(e)}"
+
+
+@mcp.tool()
+def get_eq8_properties(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get EQ Eight-specific properties beyond standard device parameters.
+
+    Parameters:
+    - track_index: The index of the track containing the EQ Eight
+    - device_index: The index of the EQ Eight device on the track
+
+    Returns edit_mode (0=A curve, 1=B curve), global_mode (0=Stereo, 1=L/R, 2=M/S),
+    oversample (boolean), and selected_band (0-7). The device must be an EQ Eight.
+    Use get_device_parameters for the standard EQ band parameters (frequency, gain, Q, etc.).
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_eq8_properties", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting EQ8 properties: {str(e)}"
+
+
+@mcp.tool()
+def set_eq8_properties(ctx: Context, track_index: int, device_index: int,
+                        edit_mode: int = None, global_mode: int = None,
+                        oversample: bool = None, selected_band: int = None) -> str:
+    """Set EQ Eight-specific properties.
+
+    Parameters:
+    - track_index: The index of the track containing the EQ Eight
+    - device_index: The index of the EQ Eight device on the track
+    - edit_mode: 0 for curve A, 1 for curve B. Optional.
+    - global_mode: 0 for Stereo, 1 for Left/Right, 2 for Mid/Side. Optional.
+    - oversample: True to enable oversampling, False to disable. Optional.
+    - selected_band: Select an EQ band (0-7) for editing. Optional.
+
+    The device must be an EQ Eight. Set any combination of properties in a single call.
+    Use get_device_parameters + set_device_parameter for the standard band parameters
+    (frequency, gain, Q, type, etc.).
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        params = {"track_index": track_index, "device_index": device_index}
+        if edit_mode is not None:
+            _validate_range(edit_mode, "edit_mode", 0, 1)
+            params["edit_mode"] = edit_mode
+        if global_mode is not None:
+            _validate_range(global_mode, "global_mode", 0, 2)
+            params["global_mode"] = global_mode
+        if oversample is not None:
+            params["oversample"] = oversample
+        if selected_band is not None:
+            _validate_range(selected_band, "selected_band", 0, 7)
+            params["selected_band"] = selected_band
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_eq8_properties", params)
+        device_name = result.get("device_name", "?")
+        changes = [f"{k}={v}" for k, v in result.items()
+                   if k not in ("track_index", "device_index", "device_name")]
+        return f"EQ Eight '{device_name}' updated: {', '.join(changes) if changes else 'no changes'}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting EQ8 properties: {str(e)}"
+
+
+@mcp.tool()
+def get_hybrid_reverb_ir(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get impulse response (IR) configuration from a Hybrid Reverb device.
+
+    Parameters:
+    - track_index: The index of the track containing the Hybrid Reverb
+    - device_index: The index of the Hybrid Reverb device on the track
+
+    Returns the list of IR categories and files, the currently selected category
+    and file indices, and time shaping parameters (attack_time, decay_time,
+    size_factor, time_shaping_on). The device must be a Hybrid Reverb.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_hybrid_reverb_ir", {
+            "track_index": track_index,
+            "device_index": device_index,
+        })
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error getting Hybrid Reverb IR: {str(e)}"
+
+
+@mcp.tool()
+def set_hybrid_reverb_ir(ctx: Context, track_index: int, device_index: int,
+                          ir_category_index: int = None, ir_file_index: int = None,
+                          ir_attack_time: float = None, ir_decay_time: float = None,
+                          ir_size_factor: float = None, ir_time_shaping_on: bool = None) -> str:
+    """Set impulse response (IR) configuration on a Hybrid Reverb device.
+
+    Parameters:
+    - track_index: The index of the track containing the Hybrid Reverb
+    - device_index: The index of the Hybrid Reverb device on the track
+    - ir_category_index: Index into ir_category_list to select an IR category. Optional.
+    - ir_file_index: Index into ir_file_list to select an IR file within the current category. Optional.
+    - ir_attack_time: IR attack time (float). Optional.
+    - ir_decay_time: IR decay time (float). Optional.
+    - ir_size_factor: IR size scaling factor (float). Optional.
+    - ir_time_shaping_on: True to enable time shaping, False to disable. Optional.
+
+    The device must be a Hybrid Reverb. Use get_hybrid_reverb_ir first to see available
+    categories and files. When changing both category and file, set them in the same call
+    — the category is applied first, then the file index within the new category.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        params = {"track_index": track_index, "device_index": device_index}
+        if ir_category_index is not None:
+            _validate_index(ir_category_index, "ir_category_index")
+            params["ir_category_index"] = ir_category_index
+        if ir_file_index is not None:
+            _validate_index(ir_file_index, "ir_file_index")
+            params["ir_file_index"] = ir_file_index
+        if ir_attack_time is not None:
+            params["ir_attack_time"] = ir_attack_time
+        if ir_decay_time is not None:
+            params["ir_decay_time"] = ir_decay_time
+        if ir_size_factor is not None:
+            params["ir_size_factor"] = ir_size_factor
+        if ir_time_shaping_on is not None:
+            params["ir_time_shaping_on"] = ir_time_shaping_on
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_hybrid_reverb_ir", params)
+        device_name = result.get("device_name", "?")
+        changes = [f"{k}={v}" for k, v in result.items()
+                   if k not in ("track_index", "device_index", "device_name")]
+        return f"Hybrid Reverb '{device_name}' IR updated: {', '.join(changes) if changes else 'no changes'}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except Exception as e:
+        return f"Error setting Hybrid Reverb IR: {str(e)}"
 
 
 # Main execution
