@@ -4,6 +4,52 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.6.1 — 2026-02-10
+
+### Fixes
+- **fix**: Spectrum chain requires `abs~` after each `fffb~` outlet — raw bipolar audio from `fffb~` gave negative/meaningless `snapshot~` values
+- **fix**: Auto-derive RMS/peak from spectrum when `peakamp~` chain not connected — `spectrum_data()` now computes RMS (root-mean-square of band amplitudes) and peak (max band) as fallback
+- **fix**: Value-based MSP data detection replaces fragile timestamp comparison — checks if any RMS/peak/spectrum values are nonzero instead of `last_update > startTime`
+- **fix**: Increased cross-track wait time defaults (300–2000ms clamp, default 500ms) — was 150–1000ms/250ms, too short for reliable MSP capture
+- **fix**: Removed duplicate `get_cue_points` / `get_groove_pool` tool registrations in server.py — were defined twice (Phase 7/8 M4L + Remote Script TCP), causing warnings
+- **fix**: Added diagnostic logging in `_crossTrackCapture` for MSP data troubleshooting
+
+### Documentation
+- M4L Device README: updated spectrum chain diagram to include `abs~` after each `fffb~` outlet
+- M4L Device README: marked `peakamp~` audio chain as optional (auto-derived from spectrum)
+- M4L Device README: added troubleshooting for negative spectrum, zero RMS/peak, cross-track zeros
+- Updated `analyze_cross_track_audio` docstring to note `abs~` requirement
+
+### No tool count change — Total tools: **199** + **19 optional** (ElevenLabs) = **218 total**
+
+---
+
+## v2.6.0 — 2026-02-10
+
+### New: Cross-Track MSP Audio Analysis via Send Routing (1 tool, requires M4L)
+
+#### `analyze_cross_track_audio` — Real MSP analysis from any track
+- Place the M4L Audio Effect device on a **return track** (e.g. Return A)
+- Call `analyze_cross_track_audio(track_index=N)` to analyze any track's audio
+- The bridge temporarily routes audio from track N → the return track via Ableton's send system
+- Captures real MSP data: RMS (left/right), peak (left/right), 8-band spectrum (fffb~)
+- **Non-destructive**: source track's main output continues to master normally
+- Send level is **always restored** after capture (even on error)
+- Configurable capture window: `wait_ms` (150-1000ms, default 250ms)
+- Returns: RMS, peak, 8-band spectrum with labels (Sub/Bass/Low-Mid/Mid/Upper-Mid/Presence/Brilliance/Air), dominant band, spectral centroid, source+return meters
+
+#### M4L Bridge v3.2.0
+- New OSC command: `/analyze_cross_track` (track_index, wait_ms, request_id)
+- New helper: `_findDeviceReturnTrackIndex()` — discovers which return track the device is on via LiveAPI id comparison
+- New deferred callback: `_crossTrackCapture()` — runs after wait_ms via `Task.schedule()`
+- Concurrency guard: `_crossTrackState` prevents overlapping cross-track analyses
+- Safety: send level restored in both success and error paths
+- Total bridge commands: 28 → **29**
+
+### Total tools: 198 → **199** (+1 M4L) + **19 optional** (ElevenLabs) = **218 total**
+
+---
+
 ## v2.5.0 — 2026-02-10
 
 ### M4L Bridge v3.1.0: Audio Effect + Cross-Track Analysis

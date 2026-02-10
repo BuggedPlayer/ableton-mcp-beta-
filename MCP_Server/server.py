@@ -421,6 +421,13 @@ class M4LConnection:
             return self._build_osc_message("/analyze_spectrum", [
                 ("s", request_id),
             ])
+        # --- Cross-Track MSP Analysis ---
+        elif command_type == "analyze_cross_track":
+            return self._build_osc_message("/analyze_cross_track", [
+                ("i", params.get("track_index", 0)),
+                ("i", params.get("wait_ms", 500)),
+                ("s", request_id),
+            ])
         else:
             raise ValueError(f"Unknown M4L command: {command_type}")
 
@@ -443,6 +450,10 @@ class M4LConnection:
         elif command_type in ("discover_params", "get_hidden_params"):
             # Chunked discovery: ~50ms per 4 params + chunked response sending
             timeout = 15.0
+        elif command_type == "analyze_cross_track":
+            # Cross-track: wait_ms + overhead for send routing + restore + response
+            wait_ms = params.get("wait_ms", 500)
+            timeout = max(3.0, (wait_ms / 1000.0) + 1.5)
         else:
             timeout = 5.0
 
@@ -5910,6 +5921,82 @@ def analyze_track_spectrum(ctx: Context) -> str:
         return f"Error analyzing spectrum: {str(e)}"
 
 
+@mcp.tool()
+def analyze_cross_track_audio(ctx: Context, track_index: int, wait_ms: int = 500) -> str:
+    """Analyze real MSP audio data (RMS, peak, 8-band spectrum) from ANY track via send-based routing.
+
+    Temporarily routes audio from the target track to the return track where the
+    M4L bridge device is loaded. Non-destructive: source track's main output to
+    master continues normally, and the send level is restored after capture.
+
+    Requirements:
+    - The AbletonMCP_Bridge M4L Audio Effect device must be on a RETURN track
+    - Audio must be playing on the target track during analysis
+    - The Max patch must have plugin~ -> fffb~ 8 -> abs~ -> snapshot~ -> [js] wired
+      (abs~ after each fffb~ outlet is REQUIRED for correct amplitude values)
+    - The Max patch must have plugin~ -> peakamp~ -> snapshot~ -> [js] for RMS/peak
+
+    Parameters:
+        track_index: Track to analyze (0-based index of regular tracks)
+        wait_ms: How long to wait for audio to flow through MSP chain (default 500ms,
+                 range 300-2000ms). Increase for more stable readings.
+
+    Returns RMS levels, peak levels, 8-band spectrum, spectral centroid, and output
+    meters for both source and analysis return tracks.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("analyze_cross_track", {
+            "track_index": track_index,
+            "wait_ms": wait_ms,
+        })
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            track_name = data.get("track_name", f"Track {track_index}")
+            output = f"Cross-Track Audio Analysis ({track_name}, track {track_index}):\n"
+            output += f"  Return track used: {data.get('return_track_index', '?')}\n"
+            output += f"  Capture wait: {data.get('capture_wait_ms', '?')}ms "
+            output += f"(actual: {data.get('actual_capture_time_ms', '?')}ms)\n\n"
+
+            if data.get("has_msp_data"):
+                output += "  MSP Analysis (from return track DSP chain):\n"
+                output += f"    RMS  L: {data.get('rms_left', 0):.6f}  R: {data.get('rms_right', 0):.6f}\n"
+                output += f"    Peak L: {data.get('peak_left', 0):.6f}  R: {data.get('peak_right', 0):.6f}\n"
+            else:
+                note = data.get("note", "No MSP data captured.")
+                output += f"  MSP Data: NOT AVAILABLE\n  Note: {note}\n"
+
+            output += f"\n  Source Track Meters:\n"
+            output += f"    L: {data.get('source_output_meter_left', 0):.4f}  "
+            output += f"R: {data.get('source_output_meter_right', 0):.4f}\n"
+            output += f"  Return Track Meters:\n"
+            output += f"    L: {data.get('return_output_meter_left', 0):.4f}  "
+            output += f"R: {data.get('return_output_meter_right', 0):.4f}\n"
+
+            if data.get("has_spectrum"):
+                output += f"\n  Spectrum ({data.get('bin_count', 0)} bands):\n"
+                bins = data.get("spectrum", [])
+                band_labels = ["Sub", "Bass", "Low-Mid", "Mid", "Upper-Mid", "Presence", "Brilliance", "Air"]
+                for i, val in enumerate(bins):
+                    label = band_labels[i] if i < len(band_labels) else f"Band {i}"
+                    bar = "#" * min(40, int(val * 50))
+                    output += f"    {label:>12}: {val:.4f} {bar}\n"
+                output += f"  Dominant band: {data.get('dominant_bin', '?')} "
+                output += f"(magnitude: {data.get('dominant_magnitude', 0):.4f})\n"
+                output += f"  Spectral centroid: {data.get('spectral_centroid', 0):.2f}\n"
+
+            output += f"\n  Send restored to: {data.get('original_send_value', 0):.4f}\n"
+            return output
+
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error in cross-track audio analysis: {str(e)}")
+        return f"Error in cross-track audio analysis: {str(e)}"
+
+
 # ==============================================================================
 # Grid Notation Tools
 # ==============================================================================
@@ -6740,19 +6827,7 @@ def re_enable_automation(ctx: Context) -> str:
         return f"Error re-enabling automation: {str(e)}"
 
 
-@mcp.tool()
-def get_cue_points(ctx: Context) -> str:
-    """Get all cue points (arrangement markers) in the song.
-
-    Returns a list of all cue points with their names and beat positions,
-    sorted by time.
-    """
-    try:
-        ableton = get_ableton_connection()
-        result = ableton.send_command("get_cue_points")
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        return f"Error getting cue points: {str(e)}"
+## get_cue_points — defined in Phase 7 (M4L Bridge) above
 
 
 @mcp.tool()
@@ -7201,20 +7276,7 @@ def rack_variation_action(ctx: Context, track_index: int, device_index: int,
         return f"Error performing rack variation action: {str(e)}"
 
 
-@mcp.tool()
-def get_groove_pool(ctx: Context) -> str:
-    """Get the groove pool contents and global groove amount.
-
-    Returns the global groove amount (0.0-1.0) and a list of all grooves
-    with their timing, quantization, random, and velocity amounts.
-    Use this to inspect groove settings before modifying them with set_groove_settings.
-    """
-    try:
-        ableton = get_ableton_connection()
-        result = ableton.send_command("get_groove_pool")
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        return f"Error getting groove pool: {str(e)}"
+## get_groove_pool — defined in Phase 8 (M4L Bridge) above
 
 
 @mcp.tool()

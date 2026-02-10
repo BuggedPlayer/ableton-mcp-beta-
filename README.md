@@ -1,6 +1,6 @@
 # AbletonMCP
 
-**198 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)
+**199 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)
 
 AbletonMCP gives Claude direct control over your Ableton Live session through the Model Context Protocol. Create tracks, write MIDI, design sounds, mix, automate, browse instruments, snapshot presets, and navigate deep into device chains and modulation matrices — all through natural language conversation.
 
@@ -64,6 +64,8 @@ AbletonMCP gives Claude direct control over your Ableton Live session through th
 
 > "Show me the spectrum analysis of the master track"
 
+> "Analyze the full spectrum of track 5 using cross-track routing"
+
 ### Mixing & Arrangement
 
 > "Set track 1 volume to -6 dB and pan slightly left"
@@ -115,13 +117,13 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 ```
 
 - **Remote Script** (TCP+UDP) — 175 tools. Runs as a Control Surface inside Ableton. TCP:9877 for all commands. UDP:9882 for fire-and-forget real-time parameter updates at 50+ Hz.
-- **M4L Bridge** (UDP/OSC) — 23 tools. A Max for Live **Audio Effect** device that accesses hidden parameters, rack chain internals, Simpler sample data, Wavetable modulation matrices, cue points, groove pool, event monitoring, undo-clean parameter control, cross-track audio metering, and 8-band spectral analysis.
+- **M4L Bridge** (UDP/OSC) — 24 tools. A Max for Live **Audio Effect** device that accesses hidden parameters, rack chain internals, Simpler sample data, Wavetable modulation matrices, cue points, groove pool, event monitoring, undo-clean parameter control, cross-track audio metering, 8-band spectral analysis, and cross-track MSP analysis via send routing.
 - **ElevenLabs Server** (optional) — 19 tools. AI voice generation, sound effects, voice cloning, transcription. Requires `ELEVENLABS_API_KEY`.
 - **Web Dashboard** — real-time status, tool call metrics, and server logs at `http://127.0.0.1:9880`.
 
 ---
 
-## Tools by Category (198 + 19 Optional)
+## Tools by Category (199 + 19 Optional)
 
 | Category | Count | Channel |
 |---|---|---|
@@ -154,10 +156,10 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 | Groove Pool | 2 | UDP/OSC |
 | Event Monitoring | 3 | UDP/OSC |
 | Undo-Clean Params | 1 | UDP/OSC |
-| Audio Analysis (cross-track) | 2 | UDP/OSC |
-| **Subtotal** | **198** | |
+| Audio Analysis (cross-track) | 3 | UDP/OSC |
+| **Subtotal** | **199** | |
 | ElevenLabs Voice/SFX | 19 | HTTPS (optional) |
-| **Total** | **217** | |
+| **Total** | **218** | |
 
 ---
 
@@ -193,7 +195,7 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 
 - **Works with any MCP client** — Claude Desktop, Cursor, or any tool that speaks the Model Context Protocol
 - **175 tools without Max for Live** — the TCP/UDP Remote Script covers tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Simpler, Transmute, Compressor, EQ8, Hybrid Reverb), song settings, view/selection, metering, real-time parameter control, and navigation. M4L is optional.
-- **+23 deep-access tools with M4L** — hidden parameters, rack chain internals, Simpler samples, Wavetable modulation, cue points/locators, groove pool, event-driven monitoring, undo-clean parameter control, cross-track audio metering, 8-band spectral analysis
+- **+24 deep-access tools with M4L** — hidden parameters, rack chain internals, Simpler samples, Wavetable modulation, cue points/locators, groove pool, event-driven monitoring, undo-clean parameter control, cross-track audio metering, 8-band spectral analysis, cross-track MSP analysis via send routing
 - **+19 optional ElevenLabs tools** — AI voice generation, sound effects, voice cloning, transcription, conversational AI agents. Requires API key.
 - **Web dashboard** — live monitoring of connection status, tool calls, and server logs at port 9880
 - **Ableton Live 10, 11, and 12** — graceful API fallbacks for version-specific features (extended notes, capture MIDI, arrangement placement)
@@ -204,7 +206,7 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 
 ## Version
 
-**v2.5.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
+**v2.6.1** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ---
 

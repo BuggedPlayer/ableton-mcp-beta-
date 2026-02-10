@@ -1,6 +1,6 @@
-# AbletonMCP Max for Live Bridge (v3.1.0)
+# AbletonMCP Max for Live Bridge (v3.2.0)
 
-Optional deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. Now an **Audio Effect** device (upgraded from MIDI Effect) — enabling real-time audio analysis via `plugin~`. Adds **23 tools** for:
+Optional deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. Now an **Audio Effect** device (upgraded from MIDI Effect) — enabling real-time audio analysis via `plugin~`. Adds **24 tools** for:
 
 - Hidden/non-automatable parameters on any Ableton device
 - Device chain navigation inside Instrument Racks, Audio Effect Racks, and Drum Racks
@@ -11,6 +11,7 @@ Optional deep Live Object Model (LOM) access that extends the standard AbletonMC
 - Event-driven property monitoring (~10ms latency)
 - Undo-clean parameter control
 - Audio analysis (cross-track meter levels + MSP spectral data)
+- Cross-track MSP analysis via send-based routing (RMS, peak, spectrum from any track)
 
 ## What It Adds
 
@@ -77,7 +78,7 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
 
    This ensures the device passes audio through without muting the track.
 
-6. **Add audio analysis chain** (for `analyze_track_audio` MSP data):
+6. **Add audio analysis chain** *(optional — RMS/peak are auto-derived from spectrum if this chain is missing)*:
 
    ```
    [plugin~]          [plugin~]
@@ -93,7 +94,9 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
      [js m4l_bridge.js]  ← connect to EXISTING [js] object
    ```
 
-   Two `plugin~` objects tap left/right channels. `peakamp~` extracts peak amplitude, `snapshot~` converts to messages.
+   Two `plugin~` objects tap left/right channels. `peakamp~` extracts peak amplitude, `snapshot~` converts to messages. **Important**: the left-channel `snapshot~` MUST connect to the **first** (leftmost) inlet of `pack` — `pack` only fires when its first inlet receives a value.
+
+   > **Note:** If this chain is not connected, the bridge automatically derives RMS/peak from the spectrum data (step 7). The derived values are a good approximation. This chain provides true stereo RMS/peak for higher precision.
 
 7. **Add spectrum analysis chain** (for `analyze_track_spectrum`):
 
@@ -101,6 +104,8 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
    [plugin~]
        |
    [fffb~ 8]          ← 8-band fixed filter bank
+    ||||||||
+    8× [abs~]          ← REQUIRED: rectify bipolar signal to amplitude
     ||||||||
     8× [snapshot~ 100] ← one per outlet
     ||||||||
@@ -111,7 +116,7 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
    [js m4l_bridge.js]  ← connect to EXISTING [js] object
    ```
 
-   `fffb~ 8` splits audio into 8 frequency bands. Each band is sampled by `snapshot~` and packed into a list.
+   `fffb~ 8` splits audio into 8 frequency bands. Each band output is a raw bipolar signal — `abs~` converts it to absolute amplitude before `snapshot~` samples it. Without `abs~`, spectrum values will be meaningless (random positive/negative sample values).
 
 8. **Add the JavaScript file**:
    - Copy `m4l_bridge.js` from this directory to the same folder where your `.amxd` device is saved
@@ -212,12 +217,13 @@ m4l_status()  →  "M4L bridge connected (v3.1.0)"
 |---|---|
 | `set_parameter_clean(track, device, param_index, value)` | Set parameter via M4L bridge with minimal undo impact |
 
-### Audio Analysis (v3.1.0)
+### Audio Analysis (v3.1.0+)
 
 | Tool | Description |
 |---|---|
 | `analyze_track_audio(track_index?)` | Get LOM meter levels for **any track** (cross-track). Optional `track_index`: -1=own track (default), 0+=specific track, -2=master |
 | `analyze_track_spectrum()` | Get 8-band spectral data from fffb~ filter bank (device's own track) |
+| `analyze_cross_track_audio(track_index, wait_ms?)` | **v3.2.0** Real MSP analysis (RMS, peak, 8-band spectrum) from **any track** via send-based routing. Device must be on a return track. |
 
 ## Troubleshooting
 
@@ -236,13 +242,28 @@ m4l_status()  →  "M4L bridge connected (v3.1.0)"
 - The device must be an **Audio Effect** (not MIDI Effect) — `plugin~` in a MIDI Effect receives no audio
 - On MIDI tracks, the device must be placed **after** an instrument in the chain
 
+**Spectrum shows negative or near-zero values**
+- Missing `abs~` objects between `fffb~` outlets and `snapshot~` objects. `fffb~` outputs raw bipolar audio signals — without `abs~`, `snapshot~` captures arbitrary instantaneous sample values (can be negative) instead of amplitudes
+- Add one `abs~` object after each of the 8 `fffb~` outlets, before the corresponding `snapshot~ 100`
+
+**RMS/peak zero but spectrum works**
+- The `prepend audio_data` object is likely not connected to `[js m4l_bridge.js]` — draw a patch cable from its outlet to the [js] object
+- Or: the left-channel `snapshot~ 200` is connected to the wrong inlet of `pack f f 0. 0.` — it must connect to the **first** (leftmost) inlet for pack to fire
+- **Automatic fallback**: even without the peakamp~ chain, the bridge auto-derives RMS/peak from spectrum data. If you see non-zero RMS/peak labeled as "derived from spectrum", this fallback is active
+
+**Cross-track analysis returns zeros (LOM meters show signal)**
+- The send routing is working (LOM meters confirm audio), but the MSP chain isn't capturing it
+- Ensure `abs~` objects are wired between `fffb~` and `snapshot~` (see spectrum chain diagram above)
+- Try increasing `wait_ms` (e.g. `analyze_cross_track_audio(track_index=0, wait_ms=1000)`) to give the audio engine more time to propagate the send change
+- Check the Max console (Window → Max Console) for diagnostic messages starting with "Cross-track capture:"
+
 **Port conflicts**
 - Default ports: 9878 (commands) and 9879 (responses)
 - If these conflict with other software, edit the port numbers in:
   - The Max patch objects (`udpreceive` and `udpsend`)
   - `server.py` (`M4LConnection` class: `send_port` and `recv_port`)
 
-## OSC Commands Reference (v3.1.0)
+## OSC Commands Reference (v3.2.0)
 
 | Address | Arguments | Description |
 |---|---|---|
@@ -271,6 +292,7 @@ m4l_status()  →  "M4L bridge connected (v3.1.0)"
 | `/set_param_clean` | `track_idx, device_idx, param_idx, value, request_id` | Set param with minimal undo |
 | `/analyze_audio` | `track_index, request_id` | Get audio meter levels + MSP data. `track_index`: -1=own, 0+=specific, -2=master |
 | `/analyze_spectrum` | `request_id` | Get spectral analysis data (8-band fffb~) |
+| `/analyze_cross_track` | `track_index, wait_ms, request_id` | Cross-track MSP analysis via send routing. Device must be on return track |
 
 ## Technical Notes
 

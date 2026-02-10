@@ -21,7 +21,7 @@ outlets = 1;
 // Initialization
 // ---------------------------------------------------------------------------
 function loadbang() {
-    post("AbletonMCP Beta M4L Bridge v3.1.0 starting...\n");
+    post("AbletonMCP Beta M4L Bridge v3.2.0 starting...\n");
     post("Listening for OSC commands on port 9878.\n");
     post("Dashboard: http://127.0.0.1:9880\n");
 }
@@ -168,6 +168,11 @@ function anything() {
             handleAnalyzeSpectrum(args);
             break;
 
+        // --- Cross-Track MSP Analysis (send-based routing) ---
+        case "analyze_cross_track":
+            handleAnalyzeCrossTrack(args);
+            break;
+
         default:
             post("AbletonMCP Beta Bridge: unknown command: '" + cmd + "' (raw: '" + addr + "')\n");
             break;
@@ -183,7 +188,7 @@ function handlePing(args) {
     var requestId = (args.length > 0) ? args[0].toString() : "";
     var response = {
         status: "success",
-        result: { m4l_bridge: true, version: "3.1.0" },
+        result: { m4l_bridge: true, version: "3.2.0" },
         id: requestId
     };
     sendResponse(JSON.stringify(response));
@@ -520,7 +525,7 @@ function handleCheckDashboard(args) {
         status: "success",
         result: {
             dashboard_url: "http://127.0.0.1:9880",
-            bridge_version: "3.1.0",
+            bridge_version: "3.2.0",
             message: "Open the dashboard URL in your browser to view server status"
         },
         id: requestId
@@ -2196,6 +2201,9 @@ function handleSetParamClean(args) {
 // ---------------------------------------------------------------------------
 
 // Audio analysis data store — populated by Max patch messages
+// Cross-track analysis state (send-route-capture-restore flow)
+var _crossTrackState = null;
+
 var _audioAnalysis = {
     rms_left: 0, rms_right: 0,
     peak_left: 0, peak_right: 0,
@@ -2220,10 +2228,23 @@ function spectrum_data() {
     var args = arrayfromargs(arguments);
     if (args.length > 0) {
         var bins = [];
+        var sumSquares = 0;
+        var maxVal = 0;
         for (var i = 0; i < args.length; i++) {
-            bins.push(parseFloat(args[i]));
+            var v = parseFloat(args[i]);
+            bins.push(v);
+            sumSquares += v * v;
+            if (v > maxVal) maxVal = v;
         }
         _audioAnalysis.spectrum = bins;
+        // Auto-derive RMS/peak from spectrum when audio_data chain isn't connected
+        if (_audioAnalysis.rms_left === 0 && _audioAnalysis.peak_left === 0) {
+            var rms = Math.sqrt(sumSquares / bins.length);
+            _audioAnalysis.rms_left = rms;
+            _audioAnalysis.rms_right = rms;   // mono approximation from spectrum
+            _audioAnalysis.peak_left = maxVal;
+            _audioAnalysis.peak_right = maxVal;
+        }
         _audioAnalysis.last_update = Date.now();
     }
 }
@@ -2327,4 +2348,241 @@ function handleAnalyzeSpectrum(args) {
         data_age_ms: Date.now() - _audioAnalysis.last_update,
         bins: bins
     }, requestId);
+}
+
+// ---------------------------------------------------------------------------
+// Cross-Track MSP Analysis (send-based routing)
+// ---------------------------------------------------------------------------
+
+// Determine which return track the device is on (-1 if not on a return track)
+function _findDeviceReturnTrackIndex() {
+    var parentTrack = new LiveAPI(null, "this_device canonical_parent");
+    if (!parentTrack || !parentTrack.id || parseInt(parentTrack.id) === 0) {
+        return -1;
+    }
+    var parentId = parseInt(parentTrack.id);
+
+    var songApi = new LiveAPI(null, "live_set");
+    var returnCount = parseInt(songApi.getcount("return_tracks"));
+
+    for (var i = 0; i < returnCount; i++) {
+        var rtApi = new LiveAPI(null, "live_set return_tracks " + i);
+        if (rtApi && rtApi.id && parseInt(rtApi.id) === parentId) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+function handleAnalyzeCrossTrack(args) {
+    // args: [track_index (int), wait_ms (int), request_id (string)]
+    if (_crossTrackState) {
+        var rid = args.length > 0 ? args[args.length - 1].toString() : "";
+        sendError("Cross-track analysis busy - try again shortly", rid);
+        return;
+    }
+    if (args.length < 3) {
+        sendError("analyze_cross_track requires track_index, wait_ms, request_id", "");
+        return;
+    }
+
+    var trackIndex = parseInt(args[0]);
+    var waitMs     = parseInt(args[1]);
+    var requestId  = args[2].toString();
+
+    // Clamp wait time: minimum 300ms, maximum 2000ms
+    waitMs = Math.max(300, Math.min(2000, waitMs));
+
+    // Step 1: Find which return track our device is on
+    var returnTrackIndex = _findDeviceReturnTrackIndex();
+    if (returnTrackIndex < 0) {
+        sendError(
+            "M4L bridge device is NOT on a return track. " +
+            "Cross-track analysis requires the Audio Effect device on a return track (e.g. Return A).",
+            requestId
+        );
+        return;
+    }
+
+    // Step 2: Validate target track exists
+    var trackApi = new LiveAPI(null, "live_set tracks " + trackIndex);
+    if (!trackApi || !trackApi.id || parseInt(trackApi.id) === 0) {
+        sendError("Track " + trackIndex + " not found", requestId);
+        return;
+    }
+    var trackName = "";
+    try { trackName = trackApi.get("name").toString(); } catch (e) {}
+
+    // Step 3: Access the target track's send to our return track
+    var sendPath = "live_set tracks " + trackIndex + " mixer_device sends " + returnTrackIndex;
+    var sendApi = new LiveAPI(null, sendPath);
+    if (!sendApi || !sendApi.id || parseInt(sendApi.id) === 0) {
+        sendError(
+            "Cannot access send " + returnTrackIndex + " on track " + trackIndex +
+            ". Track may not have enough sends.",
+            requestId
+        );
+        return;
+    }
+
+    // Step 4: Save original send value
+    var originalSendValue = parseFloat(sendApi.get("value"));
+
+    // Step 5: Set send to maximum (1.0)
+    var maxSend = parseFloat(sendApi.get("max"));
+    sendApi.set("value", maxSend);
+
+    // Step 6: Clear stale MSP data so we capture fresh data
+    _audioAnalysis.rms_left = 0;
+    _audioAnalysis.rms_right = 0;
+    _audioAnalysis.peak_left = 0;
+    _audioAnalysis.peak_right = 0;
+    _audioAnalysis.spectrum = null;
+    _audioAnalysis.last_update = 0;
+
+    // Step 7: Store state and schedule deferred capture
+    _crossTrackState = {
+        trackIndex:        trackIndex,
+        trackName:         trackName,
+        returnTrackIndex:  returnTrackIndex,
+        sendPath:          sendPath,
+        originalSendValue: originalSendValue,
+        requestId:         requestId,
+        waitMs:            waitMs,
+        startTime:         Date.now()
+    };
+
+    post("Cross-track analysis: routing track " + trackIndex + " -> return " + returnTrackIndex +
+         " (send was " + originalSendValue.toFixed(3) + ", set to " + maxSend.toFixed(3) +
+         ", wait " + waitMs + "ms)\n");
+
+    // Schedule the capture after waitMs
+    var captureTask = new Task(_crossTrackCapture);
+    captureTask.schedule(waitMs);
+}
+
+function _crossTrackCapture() {
+    if (!_crossTrackState) return;
+    var s = _crossTrackState;
+
+    try {
+        // Step 1: Capture current MSP analysis data
+        // Use value-based detection instead of timestamp comparison (more robust)
+        var hasMspData = (
+            _audioAnalysis.rms_left !== 0 ||
+            _audioAnalysis.rms_right !== 0 ||
+            _audioAnalysis.peak_left !== 0 ||
+            _audioAnalysis.peak_right !== 0 ||
+            (_audioAnalysis.spectrum !== null && _audioAnalysis.spectrum.length > 0)
+        );
+
+        // Diagnostic: log what MSP values we captured
+        post("Cross-track capture: MSP rms_l=" + _audioAnalysis.rms_left.toFixed(6) +
+             " rms_r=" + _audioAnalysis.rms_right.toFixed(6) +
+             " peak_l=" + _audioAnalysis.peak_left.toFixed(6) +
+             " peak_r=" + _audioAnalysis.peak_right.toFixed(6) +
+             " spectrum=" + (_audioAnalysis.spectrum ? _audioAnalysis.spectrum.length + " bands" : "null") +
+             " last_update=" + _audioAnalysis.last_update +
+             " hasMspData=" + hasMspData + "\n");
+
+        var capturedSpectrum = null;
+        if (_audioAnalysis.spectrum && _audioAnalysis.spectrum.length > 0) {
+            capturedSpectrum = [];
+            for (var i = 0; i < _audioAnalysis.spectrum.length; i++) {
+                capturedSpectrum.push(_audioAnalysis.spectrum[i]);
+            }
+        }
+
+        // Step 2: Read LOM meters on the return track (our device track)
+        var returnMeterLeft = 0, returnMeterRight = 0;
+        try {
+            var rtApi = new LiveAPI(null, "live_set return_tracks " + s.returnTrackIndex);
+            returnMeterLeft = parseFloat(rtApi.get("output_meter_left"));
+            returnMeterRight = parseFloat(rtApi.get("output_meter_right"));
+        } catch (e) {}
+
+        // Step 3: Read LOM meters on the source track
+        var sourceMeterLeft = 0, sourceMeterRight = 0;
+        try {
+            var srcApi = new LiveAPI(null, "live_set tracks " + s.trackIndex);
+            sourceMeterLeft = parseFloat(srcApi.get("output_meter_left"));
+            sourceMeterRight = parseFloat(srcApi.get("output_meter_right"));
+        } catch (e) {}
+
+        // Step 4: ALWAYS restore original send value
+        try {
+            var restoreApi = new LiveAPI(null, s.sendPath);
+            restoreApi.set("value", s.originalSendValue);
+        } catch (restoreErr) {
+            post("WARNING: Failed to restore send value: " + restoreErr.toString() + "\n");
+        }
+
+        // Step 5: Build result
+        var result = {
+            source: "cross_track_msp",
+            track_index: s.trackIndex,
+            track_name: s.trackName,
+            return_track_index: s.returnTrackIndex,
+            capture_wait_ms: s.waitMs,
+            actual_capture_time_ms: Date.now() - s.startTime,
+            has_msp_data: hasMspData,
+            rms_left: _audioAnalysis.rms_left,
+            rms_right: _audioAnalysis.rms_right,
+            peak_left: _audioAnalysis.peak_left,
+            peak_right: _audioAnalysis.peak_right,
+            source_output_meter_left: sourceMeterLeft,
+            source_output_meter_right: sourceMeterRight,
+            return_output_meter_left: returnMeterLeft,
+            return_output_meter_right: returnMeterRight,
+            original_send_value: s.originalSendValue,
+            send_restored: true
+        };
+
+        if (capturedSpectrum) {
+            result.has_spectrum = true;
+            result.spectrum = capturedSpectrum;
+            result.bin_count = capturedSpectrum.length;
+
+            // Compute dominant bin and spectral centroid
+            var maxVal = 0, maxIdx = 0;
+            var weightedSum = 0, totalEnergy = 0;
+            for (var j = 0; j < capturedSpectrum.length; j++) {
+                if (capturedSpectrum[j] > maxVal) {
+                    maxVal = capturedSpectrum[j];
+                    maxIdx = j;
+                }
+                weightedSum += j * capturedSpectrum[j];
+                totalEnergy += capturedSpectrum[j];
+            }
+            result.dominant_bin = maxIdx;
+            result.dominant_magnitude = maxVal;
+            result.spectral_centroid = (totalEnergy > 0) ? (weightedSum / totalEnergy) : 0;
+        } else {
+            result.has_spectrum = false;
+        }
+
+        if (!hasMspData) {
+            result.note = "No fresh MSP data received during capture window. " +
+                "Ensure audio is playing on the source track and the Max patch " +
+                "has plugin~ -> peakamp~/fffb~ -> snapshot~ -> [js] wired.";
+        }
+
+        post("Cross-track analysis complete: track " + s.trackIndex +
+             " -> return " + s.returnTrackIndex +
+             " (send restored to " + s.originalSendValue.toFixed(3) + ")\n");
+
+        _crossTrackState = null;
+        sendResult(result, s.requestId);
+
+    } catch (e) {
+        // ALWAYS restore send even on error
+        try {
+            var errRestoreApi = new LiveAPI(null, s.sendPath);
+            errRestoreApi.set("value", s.originalSendValue);
+        } catch (ignore) {}
+
+        var rid = s.requestId;
+        _crossTrackState = null;
+        sendError("Cross-track capture failed: " + e.toString(), rid);
+    }
 }

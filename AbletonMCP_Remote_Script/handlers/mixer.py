@@ -223,32 +223,6 @@ def set_master_volume(song, volume, ctrl=None):
         raise
 
 
-def set_crossfade_assign(song, track_index, assign, ctrl=None):
-    """Set A/B crossfade assignment for a track.
-
-    Args:
-        assign: 0=NONE, 1=A, 2=B
-    """
-    try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        assign = int(assign)
-        if assign < 0 or assign > 2:
-            raise ValueError("assign must be 0 (NONE), 1 (A), or 2 (B)")
-        track.mixer_device.crossfade_assign = assign
-        label = {0: "NONE", 1: "A", 2: "B"}.get(assign, str(assign))
-        return {
-            "track_index": track_index,
-            "track_name": track.name,
-            "crossfade_assign": label,
-        }
-    except Exception as e:
-        if ctrl:
-            ctrl.log_message("Error setting crossfade assign: " + str(e))
-        raise
-
-
 # --- Read-only info ---
 
 
