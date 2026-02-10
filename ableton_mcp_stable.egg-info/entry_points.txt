@@ -1,3 +1,0 @@
-[console_scripts]
-ableton-mcp-stable = MCP_Server.server:main
-elevenlabs-mcp = elevenlabs_mcp.server:main
