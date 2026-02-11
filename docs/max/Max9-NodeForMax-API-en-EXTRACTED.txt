@@ -1,0 +1,388 @@
+
+=== PAGE 1 ===
+1
+Node for Max API
+Version 9.1.1-rev.0
+cycling74.com
+
+=== PAGE 2 ===
+2
+3
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+Contents
+Node for Max API
+function addHandler
+function addHandlers
+type Anything
+function getDict
+type JSONArray
+type JSONObject
+type JSONPrimitive
+type JSONValue
+enum MAX_ENV
+type MaxFunctionHandler
+type MaxFunctionSelector
+enum MESSAGE_TYPES
+function outlet
+function outletBang
+enum POST_LEVELS
+function post
+function removeHandler
+function removeHandlers
+function setDict
+function updateDict
+Credits
+
+=== PAGE 3 ===
+Node for Max API / Node for Max API
+3
+3
+3
+4
+Node for Max API
+Enums
+Functions
+Type Aliases
+Reference for the API exposed as "max-api" when running NodeJS applications using the
+[node.script]  object. This API can be required using
+const maxAPI = require("max-api");
+Enums
+Item
+Description
+MAX_ENV
+Enum options for the value Node For Max will set on
+process.env.MAX_ENV
+MESSAGE_TYPES
+Predefined generic MaxFunctionSelector types
+POST_LEVELS
+Log Levels used in maxAPI.post
+Functions
+Item
+Description
+addHandler
+Register a single handler
+
+=== PAGE 4 ===
+Node for Max API / Node for Max API
+4
+addHandlers
+Register handlers
+getDict
+Get the value of a dict object
+outlet
+Outlet any values
+outletBang
+Outlet a Bang
+post
+Post to the Max console. Setting the last argument to a value of
+maxAPI.POST_LEVELS allows control of the log level
+removeHandler
+Remove a single handler
+removeHandlers
+Remove handlers
+setDict
+Set the value of a dict object
+updateDict
+Partially update the value of a dict object at a given path
+Type Aliases
+Item
+Description
+Anything
+JSONArray
+JSONObject
+JSONPrimitive
+JSONValue
+MaxFunctionHandler
+MaxFunctionSelector
+
+=== PAGE 5 ===
+Node for Max API / addHandler
+5
+function addHandler
+Register a single handler
+export function addHandler(selector: MaxFunctionSelector, handler: 
+MaxFunctionHandler): void;
+Name
+Type
+Description
+selector
+MaxFunctionSelector
+handler
+MaxFunctionHandler
+
+=== PAGE 6 ===
+Node for Max API / addHandlers
+6
+function addHandlers
+Register handlers
+export function addHandlers(handlers: Record<MaxFunctionSelector, 
+MaxFunctionHandler>): void;
+Name
+Type
+Description
+handlers
+Record<MaxFunctionSelector, MaxFunctionHandler>
+
+=== PAGE 7 ===
+Node for Max API / Anything
+7
+type Anything
+export type Anything = string | number | Array<string | number> | 
+JSONObject | JSONArray;
+
+=== PAGE 8 ===
+Node for Max API / getDict
+8
+function getDict
+Get the value of a dict object
+export function getDict(id: string): Promise<JSONObject>;
+Name
+Type
+Description
+id
+string
+Return Value
+Promise<JSONObject>
+
+=== PAGE 9 ===
+Node for Max API / JSONArray
+9
+type JSONArray
+export type JSONArray = Array<JSONValue>;
+
+=== PAGE 10 ===
+Node for Max API / JSONObject
+10
+type JSONObject
+export type JSONObject = { [key: string]: JSONValue | undefined };
+
+=== PAGE 11 ===
+Node for Max API / JSONPrimitive
+11
+type JSONPrimitive
+export type JSONPrimitive = string | number | boolean | null;
+
+=== PAGE 12 ===
+Node for Max API / JSONValue
+12
+type JSONValue
+export type JSONValue = JSONPrimitive | JSONArray | JSONObject;
+
+=== PAGE 13 ===
+Node for Max API / MAX_ENV
+13
+enum MAX_ENV
+Enum options for the value Node For Max will set on process.env.MAX_ENV
+Members
+Member
+Value
+Description
+MAX
+"max"
+node.script running from within Max
+MAX_FOR_LIVE
+"maxforlive"
+node.script running from within Max For Live
+STANDALONE
+"max:standalone"
+node.script running from within a standalone
+application
+
+=== PAGE 14 ===
+Node for Max API / MaxFunctionHandler
+14
+type MaxFunctionHandler
+export type MaxFunctionHandler = (...args: any[]) => any;
+
+=== PAGE 15 ===
+Node for Max API / MaxFunctionSelector
+15
+type MaxFunctionSelector
+export type MaxFunctionSelector = MESSAGE_TYPES | string;
+
+=== PAGE 16 ===
+Node for Max API / MESSAGE_TYPES
+16
+enum MESSAGE_TYPES
+Predefined generic MaxFunctionSelector types
+Members
+Member
+Value
+Description
+ALL
+"all"
+Generic Type for *all* kinds of messages
+BANG
+"bang"
+Bang message type
+DICT
+"dict"
+Dictionary message type
+LIST
+"list"
+List message type
+NUMBER
+"number"
+Number message type
+
+=== PAGE 17 ===
+Node for Max API / outlet
+17
+function outlet
+Outlet any values
+export function outlet(...args: JSONValue[]): Promise<void>;
+Name
+Type
+Description
+args
+JSONValue[]
+Return Value
+Promise<void>
+
+=== PAGE 18 ===
+Node for Max API / outletBang
+18
+function outletBang
+Outlet a Bang
+export function outletBang(): Promise<void>;
+Name
+Type
+Description
+Return Value
+Promise<void>
+
+=== PAGE 19 ===
+Node for Max API / POST_LEVELS
+19
+enum POST_LEVELS
+Log Levels used in maxAPI.post
+Members
+Member
+Value
+Description
+ERROR
+"error"
+error level messages
+INFO
+"info"
+info level messages
+WARN
+"warn"
+warn level messages
+
+=== PAGE 20 ===
+Node for Max API / post
+20
+function post
+Post to the Max console. Setting the last argument to a value of maxAPI.POST_LEVELS allows
+control of the log level
+export function post(...args: Array<Anything | POST_LEVELS>): 
+Promise<void>;
+Name
+Type
+Description
+args
+Array<Anything | POST_LEVELS>
+Return Value
+Promise<void>
+
+=== PAGE 21 ===
+Node for Max API / removeHandler
+21
+function removeHandler
+Remove a single handler
+export function removeHandler(selector: MaxFunctionSelector, handler: 
+MaxFunctionHandler): void;
+Name
+Type
+Description
+selector
+MaxFunctionSelector
+handler
+MaxFunctionHandler
+
+=== PAGE 22 ===
+Node for Max API / removeHandlers
+22
+function removeHandlers
+Remove handlers
+export function removeHandlers(selector: MaxFunctionSelector): void;
+Name
+Type
+Description
+selector
+MaxFunctionSelector
+
+=== PAGE 23 ===
+Node for Max API / setDict
+23
+function setDict
+Set the value of a dict object
+export function setDict(id: string, dict: JSONObject): Promise<JSONObject>;
+Name
+Type
+Description
+id
+string
+dict
+JSONObject
+Return Value
+Promise<JSONObject>
+
+=== PAGE 24 ===
+Node for Max API / updateDict
+24
+function updateDict
+Partially update the value of a dict object at a given path
+export function updateDict(id: string, updatePath: string, updateValue: 
+JSONValue): Promise<JSONObject>;
+Name
+Type
+Description
+id
+string
+updatePath
+string
+updateValue
+JSONValue
+Return Value
+Promise<JSONObject>
+
+=== PAGE 25 ===
+User Guide / Credits
+25
+Credits
+Cycling '74
+440 N Barranca Ave #4074
+Covina, CA 91723 USA
+Copyright 2025 Cycling '74. All rights reserved.
+This document, as well as the software described in it, is furnished under license and may be used
+or copied only in accordance with the terms of such license. The content of this document is
+furnished for informational use only, is subject to change without notice, and should not be
+construed as a commitment by Cycling '74. Every effort has been made to ensure that the
+information in this document is accurate. Cycling '74 assumes no responsibility or liability for any
+errors or inaccuracies that may appear in this document.
+Except as permitted by such license, no part of this publication may be reproduced, edited, stored in
+a retrieval system or transmitted, in any form or by any means, electronic, mechanical, recording or
+otherwise, without the prior written permission of Cycling '74.
+Contact Support: https://cycling74.com/support/contact
