@@ -511,10 +511,9 @@ def search_browser(song, query, category, ctrl=None):
                         count += 1
                         search_item(child, depth + 1, max_depth)
 
-        if category == "all" or category not in _BROWSER_ROOTS:
+        if category == "all":
             for attr in _BROWSER_ROOTS:
                 if attr == "user_folders":
-                    # user_folders is a list of BrowserItems, not a single root
                     try:
                         for folder in getattr(app.browser, "user_folders", []):
                             search_item(folder)
@@ -524,10 +523,23 @@ def search_browser(song, query, category, ctrl=None):
                 root = getattr(app.browser, attr, None)
                 if root is not None:
                     search_item(root)
+        elif category in _BROWSER_ROOTS:
+            if category == "user_folders":
+                try:
+                    for folder in getattr(app.browser, "user_folders", []):
+                        search_item(folder)
+                except Exception:
+                    pass
+            else:
+                root = getattr(app.browser, category, None)
+                if root is not None:
+                    search_item(root)
         else:
-            root = getattr(app.browser, category, None)
-            if root is not None:
-                search_item(root)
+            msg = "Invalid browser category '{0}'. Valid: 'all', {1}".format(
+                category, ", ".join("'{0}'".format(r) for r in _BROWSER_ROOTS))
+            if ctrl:
+                ctrl.log_message(msg)
+            raise ValueError(msg)
 
         return {
             "query": query,

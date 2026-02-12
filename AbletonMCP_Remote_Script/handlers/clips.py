@@ -83,12 +83,13 @@ def add_notes_to_clip(song, track_index, clip_index, notes, ctrl=None):
 
         # Strategy 3: Legacy set_notes fallback
         # Fetch existing notes and merge so set_notes doesn't replace them.
-        existing = clip.get_notes(0, 0, clip.length, 128)
+        # Use clip.length + 1 to ensure notes at the exact boundary are captured.
+        existing = clip.get_notes(0, 0, clip.length + 1, 128)
         live_notes = list(existing)
         for s in note_specs:
             live_notes.append((s["pitch"], s["start_time"], s["duration"], int(s["velocity"]), s["mute"]))
         clip.set_notes(tuple(live_notes))
-        return {"note_count": len(notes)}
+        return {"note_count": len(live_notes)}
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error adding notes to clip: " + str(e))
@@ -484,7 +485,13 @@ def set_clip_launch_mode(song, track_index, clip_index, launch_mode, ctrl=None):
     """
     try:
         clip = _get_clip(song, track_index, clip_index)
-        clip.launch_mode = int(launch_mode)
+        launch_mode = int(launch_mode)
+        if launch_mode < 0 or launch_mode > 3:
+            msg = "launch_mode must be 0-3 (trigger/gate/toggle/repeat), got {0}".format(launch_mode)
+            if ctrl:
+                ctrl.log_message(msg)
+            raise ValueError(msg)
+        clip.launch_mode = launch_mode
         return {
             "launch_mode": clip.launch_mode,
             "clip_name": clip.name,
@@ -555,8 +562,11 @@ def audio_to_midi(song, track_index, clip_index, conversion_type, ctrl=None):
             raise ValueError("conversion_type must be 'drums', 'harmony', or 'melody'")
         try:
             from Live.Conversions import audio_to_midi_clip, AudioToMidiType
-        except ImportError:
-            raise Exception("Audio-to-MIDI conversion requires Live 12+")
+        except ImportError as imp_err:
+            raise Exception(
+                "Audio-to-MIDI conversion requires Live 12+ "
+                "(failed to import Live.Conversions: {0})".format(imp_err)
+            ) from imp_err
         type_map = {
             "drums": AudioToMidiType.drums_to_midi,
             "harmony": AudioToMidiType.harmony_to_midi,
