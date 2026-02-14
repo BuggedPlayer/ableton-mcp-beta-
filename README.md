@@ -14,7 +14,7 @@ AbletonMCP gives Claude direct control over your Ableton Live session through th
 
 > "Make a 4-bar jazz chord progression — Cm7, Fm7, Dm7b5, G7 — with voice leading"
 
-> "Build a Metro Boomin style 808 beat using grid notation"
+> "Build a Metro-Boomin-style 808 beat using grid notation"
 
 > "Set the tempo to 128 BPM, create 4 tracks, and set up a minimal techno arrangement"
 

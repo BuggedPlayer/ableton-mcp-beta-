@@ -540,11 +540,17 @@ def set_song_settings(song, signature_numerator=None, signature_denominator=None
             song.swing_amount = val
             changes["swing_amount"] = val
         if clip_trigger_quantization is not None:
-            song.clip_trigger_quantization = int(clip_trigger_quantization)
-            changes["clip_trigger_quantization"] = int(clip_trigger_quantization)
+            val = int(clip_trigger_quantization)
+            if val < 0 or val > 13:
+                raise ValueError("clip_trigger_quantization must be 0-13 (Live RecordingQuantization enum), got {0}".format(val))
+            song.clip_trigger_quantization = val
+            changes["clip_trigger_quantization"] = val
         if midi_recording_quantization is not None:
-            song.midi_recording_quantization = int(midi_recording_quantization)
-            changes["midi_recording_quantization"] = int(midi_recording_quantization)
+            val = int(midi_recording_quantization)
+            if val < 0 or val > 13:
+                raise ValueError("midi_recording_quantization must be 0-13 (Live RecordingQuantization enum), got {0}".format(val))
+            song.midi_recording_quantization = val
+            changes["midi_recording_quantization"] = val
         if back_to_arranger is not None:
             song.back_to_arranger = bool(back_to_arranger)
             changes["back_to_arranger"] = bool(back_to_arranger)

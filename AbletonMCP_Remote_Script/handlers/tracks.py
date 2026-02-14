@@ -440,8 +440,8 @@ def create_midi_track_with_simpler(song, track_index, clip_index, ctrl=None):
             raise ValueError("Clip is not an audio clip")
         try:
             from Live.Conversions import create_midi_track_with_simpler as _create
-        except ImportError:
-            raise Exception("create_midi_track_with_simpler requires Live 12+")
+        except ImportError as e:
+            raise Exception("create_midi_track_with_simpler requires Live 12+") from e
         _create(song, clip)
         return {
             "created": True,

@@ -36,7 +36,7 @@ def set_track_mute(song, track_index, mute, ctrl=None):
     """Set track mute state."""
     try:
         track = get_track(song, track_index)
-        track.mute = mute
+        track.mute = bool(mute)
         return {"track_index": track_index, "mute": track.mute}
     except Exception as e:
         if ctrl:
@@ -48,7 +48,7 @@ def set_track_solo(song, track_index, solo, ctrl=None):
     """Set track solo state."""
     try:
         track = get_track(song, track_index)
-        track.solo = solo
+        track.solo = bool(solo)
         return {"track_index": track_index, "solo": track.solo}
     except Exception as e:
         if ctrl:
@@ -133,7 +133,7 @@ def set_return_track_mute(song, return_track_index, mute, ctrl=None):
     """Set the mute state of a return track."""
     try:
         return_track = get_track(song, return_track_index, "return")
-        return_track.mute = mute
+        return_track.mute = bool(mute)
         return {
             "return_track_index": return_track_index,
             "mute": return_track.mute,
@@ -148,7 +148,7 @@ def set_return_track_solo(song, return_track_index, solo, ctrl=None):
     """Set the solo state of a return track."""
     try:
         return_track = get_track(song, return_track_index, "return")
-        return_track.solo = solo
+        return_track.solo = bool(solo)
         return {
             "return_track_index": return_track_index,
             "solo": return_track.solo,

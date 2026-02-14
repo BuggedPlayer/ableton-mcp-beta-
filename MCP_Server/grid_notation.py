@@ -454,7 +454,12 @@ def is_drum_track(notes: list[dict]) -> bool:
     durations = []
     for n in notes:
         unique_pitches.add(n.get('pitch', 60))
-        d = float(n.get('duration', n.get('end', 0) - n.get('start', 0)))
+        if 'duration' in n:
+            d = float(n['duration'])
+        elif 'end' in n and 'start' in n and n['end'] is not None and n['start'] is not None:
+            d = float(n['end']) - float(n['start'])
+        else:
+            continue
         if d > 0:
             durations.append(d)
 

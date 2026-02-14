@@ -110,8 +110,9 @@ def add_notes_extended(song, track_index, clip_index, notes, ctrl=None):
                 except Exception:
                     # Strategy 3: Legacy set_notes fallback (tuples)
                     # Fetch existing notes and merge so set_notes doesn't
-                    # replace them.
-                    existing = clip.get_notes(0, 0, clip.length, 128)
+                    # replace them.  Use clip.length + 1 to catch notes
+                    # starting exactly at the clip boundary.
+                    existing = clip.get_notes(0, 0, clip.length + 1, 128)
                     live_notes = list(existing)
                     for s in note_specs:
                         live_notes.append((s["pitch"], s["start_time"], s["duration"], int(s["velocity"]), s["mute"]))
@@ -120,8 +121,9 @@ def add_notes_extended(song, track_index, clip_index, notes, ctrl=None):
             return {"note_count": len(note_specs), "extended": extended}
         else:
             # Legacy fallback — fetch existing notes and merge so set_notes
-            # doesn't replace them.
-            existing = clip.get_notes(0, 0, clip.length, 128)
+            # doesn't replace them.  Use clip.length + 1 to catch notes
+            # starting exactly at the clip boundary.
+            existing = clip.get_notes(0, 0, clip.length + 1, 128)
             live_notes = list(existing)
             for n in notes:
                 pitch = max(0, min(127, int(n.get("pitch", 60))))
@@ -307,11 +309,22 @@ def quantize_clip_notes(song, track_index, clip_index, grid_size, ctrl=None):
                     quantized_time = round(start_time / grid_size) * grid_size
                     quantized_notes.append((pitch, quantized_time, duration, velocity, mute))
 
+                # NOTE: remove+set is not atomic.  If set_notes fails after
+                # remove, all notes are lost.  We attempt to restore the
+                # original notes on failure.
                 if hasattr(clip, 'remove_notes_extended'):
                     clip.remove_notes_extended(0, 128, 0, clip.length)
                 else:
                     clip.remove_notes(0, 0, clip.length, 128)
-                clip.set_notes(tuple(quantized_notes))
+                try:
+                    clip.set_notes(tuple(quantized_notes))
+                except Exception:
+                    try:
+                        clip.set_notes(tuple(notes_tuple))
+                    except Exception as restore_err:
+                        if ctrl:
+                            ctrl.log_message("Failed to restore original notes after quantize error: " + str(restore_err))
+                    raise
 
         return {
             "quantized": True,
@@ -358,11 +371,22 @@ def transpose_clip_notes(song, track_index, clip_index, semitones, ctrl=None):
                 new_pitch = max(0, min(127, pitch + semitones))
                 transposed_notes.append((new_pitch, start_time, duration, velocity, mute))
 
+            # NOTE: remove+set is not atomic.  If set_notes fails after
+            # remove, all notes are lost.  We attempt to restore the
+            # original notes on failure.
             if hasattr(clip, 'remove_notes_extended'):
                 clip.remove_notes_extended(0, 128, 0, clip.length)
             else:
                 clip.remove_notes(0, 0, clip.length, 128)
-            clip.set_notes(tuple(transposed_notes))
+            try:
+                clip.set_notes(tuple(transposed_notes))
+            except Exception:
+                try:
+                    clip.set_notes(tuple(notes_tuple))
+                except Exception as restore_err:
+                    if ctrl:
+                        ctrl.log_message("Failed to restore original notes after transpose error: " + str(restore_err))
+                raise
 
         return {
             "transposed": True,

@@ -9,7 +9,7 @@ from ._helpers import get_track, get_clip
 
 def _find_parameter(song, track_index, parameter_name):
     """Find a track mixer or device parameter by name."""
-    track = song.tracks[track_index]
+    track = get_track(song, track_index)
     lower = parameter_name.lower()
 
     # Check mixer parameters
