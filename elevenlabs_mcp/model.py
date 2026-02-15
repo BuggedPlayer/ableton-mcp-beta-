@@ -1,12 +1,12 @@
 from pydantic import BaseModel
-from typing import Dict, Optional
+from typing import Optional
 
 
 class McpVoice(BaseModel):
     id: str
     name: str
     category: str
-    fine_tuning_status: Optional[Dict] = None
+    fine_tuning_status: Optional[str] = None
 
 
 class ConvAiAgentListItem(BaseModel):

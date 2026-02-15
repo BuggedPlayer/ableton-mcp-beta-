@@ -333,7 +333,7 @@ def voice_clone(
         for f in input_files:
             f.close()
     if response is None:
-        raise RuntimeError("voice_clone: API call did not return a response")
+        make_error("voice_clone: API call did not return a response")
     logger.info("voice_clone: name=%s voice_id=%s", name, response.voice_id)
     return TextContent(
         type="text",
@@ -687,7 +687,7 @@ def text_to_voice(
     text: str = None,
     output_directory: str = None,
 ) -> TextContent:
-    if voice_description == "":
+    if not voice_description or not voice_description.strip():
         make_error("Voice description is required.")
 
     previews = _get_client().text_to_voice.create_previews(

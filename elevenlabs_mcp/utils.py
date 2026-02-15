@@ -30,9 +30,10 @@ def is_file_writeable(path: Path) -> bool:
 def make_output_file(
     tool: str, text: str, output_path: Path, extension: str, full_id: bool = False
 ) -> Path:
-    # Use a short hash of the input text instead of raw content to avoid
+    # Use a hash of the input text instead of raw content to avoid
     # leaking user-provided text into filenames and logs.
-    id_safe = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:8]
+    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    id_safe = digest if full_id else digest[:8]
     if not id_safe:
         id_safe = "unnamed"
     output_file_name = "{0}_{1}_{2}.{3}".format(
@@ -86,11 +87,11 @@ def find_similar_filenames(
 
     Args:
         target_file (str): The reference filename to compare against
-        directory (str): Directory to search in (defaults to current directory)
+        directory (Path): Directory to search in (pathlib.Path)
         threshold (int): Similarity threshold (0 to 100, where 100 is identical)
 
     Returns:
-        list: List of similar filenames with their similarity scores
+        list[tuple[Path, int]]: List of (file_path, similarity_score) tuples
     """
     target_filename = os.path.basename(target_file)
     similar_files = []

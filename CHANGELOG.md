@@ -73,6 +73,9 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `server.py` `_get_client` — missing API key now raises `ElevenLabsMcpError` (via `make_error()`) instead of raw `ValueError`, consistent with all other validation paths.
 - **fix**: `server.py` — all 19 tool functions wrapped with `@_safe_api` decorator that catches `httpx.TimeoutException`, `httpx.HTTPStatusError`, and generic exceptions, re-raising them as `ElevenLabsMcpError` with actionable context. Prevents raw stack traces from leaking to MCP clients.
 - **fix**: `server.py` `search_voice_library` — `page` and `page_size` validated before forwarding to API (`page >= 0`, `1 <= page_size <= 100`).
+- **fix**: `server.py` `text_to_voice` — empty-description guard now rejects `None`, `""`, and whitespace-only input (was only checking `== ""`).
+- **fix**: `server.py` `voice_clone` — replaced `raise RuntimeError(...)` with `make_error(...)` so the error is `ElevenLabsMcpError` and handled consistently by `_safe_api`.
+- **fix**: `model.py` `McpVoice` — `fine_tuning_status` type changed from `Optional[Dict]` to `Optional[str]`; `get_voice` passes the fine-tuning `state` string, not the dict, so Pydantic v2 no longer raises `ValidationError`.
 - **fix**: `__main__.py` — `--print` output now redacts API keys/secrets/tokens via `_redact_config()` deep-copy.
 - **fix**: `__main__.py` — config merge loads existing JSON and merges only the ElevenLabs server entry (was clobbering entire config).
 - **fix**: `__main__.py` — `get_claude_config_path()` now returns the platform-specific path even if directory doesn't exist (first-time users). Caller creates it via `mkdir(parents=True)`.
@@ -97,7 +100,8 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `utils.py` `make_output_path` — containment check validates absolute `output_directory` against `base_path`.
 - **fix**: `utils.py` `handle_input_file` — validates absolute paths against `base_path`.
 - **fix**: `utils.py` `make_error` — added `-> NoReturn` return type annotation with `typing.NoReturn` import for static analysis correctness.
-- **fix**: `utils.py` `find_similar_filenames` — return type annotation corrected from `list[tuple[str, int]]` to `list[tuple[Path, int]]` (function actually returns `Path` objects, not strings).
+- **fix**: `utils.py` `find_similar_filenames` — return type annotation corrected from `list[tuple[str, int]]` to `list[tuple[Path, int]]` (function actually returns `Path` objects, not strings); docstring updated `directory` parameter from `str` to `Path`.
+- **fix**: `utils.py` `make_output_file` — `full_id` parameter now honored: uses full SHA-256 hex digest when `True`, 8-char prefix when `False` (was always using 8-char prefix).
 
 #### Documentation
 
@@ -121,6 +125,10 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `utils.py` — updated `from fuzzywuzzy import fuzz` → `from rapidfuzz import fuzz` (drop-in compatible `token_sort_ratio`).
 
 ### Tool count: **230** + **19 optional** (ElevenLabs) = **249 total**
+
+> **Note:** Versions v2.8.0–v2.9.0 reported 232 core / 251 total due to a
+> tabulation error (197 TCP/UDP + 35 M4L = 232, but 2 categories were
+> double-counted). The correct total is 230 core + 19 optional = 249.
 
 ---
 
@@ -159,7 +167,7 @@ Internal refactoring across all 4 layers — no new tools, no API changes, no be
 - **fix**: Path containment uses `relative_to()` instead of fragile string prefix check
 - **perf**: Audio data streamed to disk chunk-by-chunk (was `b"".join()` full buffer in memory)
 
-### No tool count change — Total tools: **232** + **19 optional** (ElevenLabs) = **251 total**
+### No tool count change — Total tools: **232** + **19 optional** (ElevenLabs) = **251 total** *(corrected to 230/249 in v2.9.1)*
 
 ---
 
@@ -218,7 +226,7 @@ Internal refactoring across all 4 layers — no new tools, no API changes, no be
 - **fix**: `add_notes_extended` — removed unused `e1`/`e2` exception variables (lint cleanup)
 - **fix**: `get_notes_extended` / `remove_notes_extended` — switched from keyword to positional arguments (`from_pitch, pitch_span, from_time, time_span`) to avoid parameter-name mismatches across Live versions; silent `except` now logs via ctrl instead of swallowing errors
 
-### No tool count change — Total tools: **232** + **19 optional** (ElevenLabs) = **251 total**
+### No tool count change — Total tools: **232** + **19 optional** (ElevenLabs) = **251 total** *(corrected to 230/249 in v2.9.1)*
 
 ---
 
@@ -245,7 +253,7 @@ Internal refactoring across all 4 layers — no new tools, no API changes, no be
 - `get_split_stereo` — read left/right split stereo pan values
 - `set_split_stereo` — set independent L/R panning for a track
 
-### Total tools: 223 → **232** (+9) + **19 optional** (ElevenLabs) = **251 total**
+### Total tools: 223 → **232** (+9) + **19 optional** (ElevenLabs) = **251 total** *(corrected to 230/249 in v2.9.1)*
 
 ---
 
