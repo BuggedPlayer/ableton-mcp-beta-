@@ -591,8 +591,9 @@ def set_clip_grid(song, track_index, clip_index,
             clip.view.grid_quantization = int(grid_quantization)
             changes["grid_quantization"] = int(grid_quantization)
         if grid_is_triplet is not None:
-            clip.view.grid_is_triplet = bool(grid_is_triplet)
-            changes["grid_is_triplet"] = bool(grid_is_triplet)
+            grid_is_triplet = bool(int(grid_is_triplet))
+            clip.view.grid_is_triplet = grid_is_triplet
+            changes["grid_is_triplet"] = grid_is_triplet
         if not changes:
             raise ValueError("No parameters specified")
         changes["track_index"] = track_index
@@ -670,14 +671,14 @@ def add_warp_marker(song, track_index, clip_index, beat_time, sample_time=None, 
         _, clip = get_clip(song, track_index, clip_index)
         if not clip.is_audio_clip:
             raise ValueError("Warp markers are only available on audio clips")
+        marker = {"beat_time": float(beat_time)}
         if sample_time is not None:
-            clip.add_warp_marker(float(beat_time), float(sample_time))
-        else:
-            clip.add_warp_marker(float(beat_time))
+            marker["sample_time"] = float(sample_time)
+        clip.add_warp_marker(marker)
         return {
             "added": True,
-            "beat_time": float(beat_time),
-            "sample_time": float(sample_time) if sample_time is not None else None,
+            "beat_time": marker["beat_time"],
+            "sample_time": marker.get("sample_time"),
         }
     except Exception as e:
         if ctrl:
