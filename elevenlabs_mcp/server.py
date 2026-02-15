@@ -72,9 +72,9 @@ def _get_client():
             headers={"User-Agent": f"ElevenLabs-MCP/{__version__}"},
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
-        _client = ElevenLabs(api_key=api_key, httpx_client=custom)
         import atexit
         atexit.register(lambda: custom.close())
+        _client = ElevenLabs(api_key=api_key, httpx_client=custom)
     return _client
 
 mcp = FastMCP("ElevenLabs")
@@ -132,7 +132,6 @@ def text_to_speech(
             "speed": speed,
         },
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path / output_file_name, "wb") as f:
         for chunk in audio_data:
             f.write(chunk)
@@ -467,7 +466,15 @@ def add_knowledge_base_to_agent(
             file=file,
         )
         agent = _get_client().conversational_ai.agents.get(agent_id)
-        agent.conversation_config.agent.prompt.knowledge_base.append(
+        conv_cfg = getattr(agent, "conversation_config", None)
+        agent_cfg = getattr(conv_cfg, "agent", None) if conv_cfg else None
+        prompt_cfg = getattr(agent_cfg, "prompt", None) if agent_cfg else None
+        kb_list = getattr(prompt_cfg, "knowledge_base", None) if prompt_cfg else None
+        if not isinstance(kb_list, list):
+            kb_list = []
+            if prompt_cfg is not None:
+                prompt_cfg.knowledge_base = kb_list
+        kb_list.append(
             KnowledgeBaseLocator(
                 type="file" if file else "url",
                 name=knowledge_base_name,
