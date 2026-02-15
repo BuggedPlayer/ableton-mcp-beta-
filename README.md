@@ -1,6 +1,6 @@
 # AbletonMCP
 
-**232 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)
+**249 tools connecting Claude AI to Ableton Live** (230 core + 19 optional ElevenLabs voice/SFX tools)
 
 AbletonMCP gives Claude direct control over your Ableton Live session through the Model Context Protocol. Create tracks, write MIDI, design sounds, mix, automate, browse instruments, snapshot presets, and navigate deep into device chains and modulation matrices — all through natural language conversation.
 
@@ -132,14 +132,14 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
                           +---<--HTTPS-->  ElevenLabs API
 ```
 
-- **Remote Script** (TCP+UDP) — 192 tools. Runs as a Control Surface inside Ableton. TCP:9877 for all commands. UDP:9882 for fire-and-forget real-time parameter updates at 50+ Hz.
-- **M4L Bridge** (UDP/OSC) — 38 tools. A Max for Live **Audio Effect** device that accesses hidden parameters, rack chain internals, Simpler sample data, Wavetable modulation matrices, cue points, groove pool, event monitoring, undo-clean parameter control, cross-track audio metering, 8-band spectral analysis, cross-track MSP analysis via send routing, app version detection, automation state introspection, enhanced chain discovery, note surgery by ID, chain-level mixing, device AB comparison, clip scrubbing, and split stereo panning.
+- **Remote Script** (TCP+UDP) — 197 tools. Runs as a Control Surface inside Ableton. TCP:9877 for all commands. UDP:9882 for fire-and-forget real-time parameter updates at 50+ Hz.
+- **M4L Bridge** (UDP/OSC) — 35 tools. A Max for Live **Audio Effect** device that accesses hidden parameters, rack chain internals, Simpler sample data, Wavetable modulation matrices, cue points, groove pool, event monitoring, undo-clean parameter control, cross-track audio metering, 8-band spectral analysis, cross-track MSP analysis via send routing, app version detection, automation state introspection, enhanced chain discovery, note surgery by ID, chain-level mixing, device AB comparison, clip scrubbing, and split stereo panning.
 - **ElevenLabs Server** (optional) — 19 tools. AI voice generation, sound effects, voice cloning, transcription. Requires `ELEVENLABS_API_KEY`.
 - **Web Dashboard** — real-time status, tool call metrics, and server logs at `http://127.0.0.1:9880`.
 
 ---
 
-## Tools by Category (232 + 19 Optional)
+## Tools by Category (230 + 19 Optional)
 
 | Category | Count | Channel |
 |---|---|---|
@@ -191,9 +191,9 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 | Event Monitoring | 3 | UDP/OSC |
 | Undo-Clean Params | 1 | UDP/OSC |
 | Audio Analysis (cross-track) | 3 | UDP/OSC |
-| **Subtotal** | **232** | |
+| **Subtotal** | **230** | |
 | ElevenLabs Voice/SFX | 19 | HTTPS (optional) |
-| **Total** | **251** | |
+| **Total** | **249** | |
 
 ---
 
@@ -228,8 +228,8 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 ## Flexibility
 
 - **Works with any MCP client** — Claude Desktop, Cursor, or any tool that speaks the Model Context Protocol
-- **192 tools without Max for Live** — the TCP/UDP Remote Script covers tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Simpler, Transmute, Compressor, EQ8, Hybrid Reverb), song settings, scale/harmony, punch recording, Link sync, view/selection, warp markers, tuning system, looper control, take lanes, metering, real-time parameter control, and navigation. M4L is optional.
-- **+38 deep-access tools with M4L** — hidden parameters, rack chain internals, Simpler samples, Wavetable modulation, cue points/locators, groove pool, event-driven monitoring, undo-clean parameter control, cross-track audio metering, 8-band spectral analysis, cross-track MSP analysis via send routing, app version detection, automation state introspection, chain discovery, note surgery by ID, chain-level mixing, device AB comparison, clip scrubbing, split stereo panning
+- **197 tools without Max for Live** — the TCP/UDP Remote Script covers tracks, clips, MIDI, mixing, automation, browser, snapshots, macros, presets, drum pads, rack variations, grooves, audio-to-MIDI conversion, device-specific controls (Simpler, Transmute, Compressor, EQ8, Hybrid Reverb), song settings, scale/harmony, punch recording, Link sync, view/selection, warp markers, tuning system, looper control, take lanes, metering, real-time parameter control, and navigation. M4L is optional.
+- **+35 deep-access tools with M4L** — hidden parameters, rack chain internals, Simpler samples, Wavetable modulation, cue points/locators, groove pool, event-driven monitoring, undo-clean parameter control, cross-track audio metering, 8-band spectral analysis, cross-track MSP analysis via send routing, app version detection, automation state introspection, chain discovery, note surgery by ID, chain-level mixing, device AB comparison, clip scrubbing, split stereo panning
 - **+19 optional ElevenLabs tools** — AI voice generation, sound effects, voice cloning, transcription, conversational AI agents. Requires API key.
 - **Web dashboard** — live monitoring of connection status, tool calls, and server logs at port 9880
 - **Ableton Live 10, 11, and 12** — graceful API fallbacks for version-specific features (extended notes, capture MIDI, arrangement placement)

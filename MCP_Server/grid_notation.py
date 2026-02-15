@@ -87,7 +87,7 @@ DRUM_SYMBOLS = {
 # Preferred labels for output (2-letter, consistent)
 PREFERRED_LABELS = {
     36: 'KK', 35: 'KK',  # Kicks
-    38: 'SN', 40: 'SN',  # Snares
+    38: 'SN', 40: 'RM',  # Snare / Rimshot (40=RM matches DRUM_LABELS)
     37: 'SS',            # Sidestick
     39: 'CL',            # Clap
     42: 'HC', 44: 'HP',  # Hi-hat closed / pedal

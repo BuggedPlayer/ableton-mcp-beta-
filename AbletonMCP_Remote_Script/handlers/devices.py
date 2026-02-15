@@ -568,10 +568,10 @@ def rack_variation_action(song, track_index, device_index, action, variation_ind
 # --- Simpler-to-Drum-Rack Conversion ---
 
 
-def sliced_simpler_to_drum_rack(song, track_index, device_index, ctrl=None):
+def sliced_simpler_to_drum_rack(song, track_index, device_index, track_type="track", ctrl=None):
     """Convert a sliced Simpler device to a Drum Rack."""
     try:
-        track = get_track(song, track_index)
+        track = resolve_track(song, track_index, track_type)
         if device_index < 0 or device_index >= len(track.devices):
             raise IndexError("Device index out of range")
         device = track.devices[device_index]
@@ -1311,7 +1311,7 @@ def manage_sample_slices(song, track_index, device_index, action,
 # --- Looper Device ---
 
 
-def control_looper(song, track_index, device_index, action, clip_slot_index=None, ctrl=None):
+def control_looper(song, track_index, device_index, action, clip_slot_index=None, track_type="track", ctrl=None):
     """Control a Looper device with specialized actions.
 
     Args:
@@ -1320,7 +1320,7 @@ def control_looper(song, track_index, device_index, action, clip_slot_index=None
                 'export' (requires clip_slot_index)
     """
     try:
-        track = get_track(song, track_index)
+        track = resolve_track(song, track_index, track_type)
         if device_index < 0 or device_index >= len(track.devices):
             raise IndexError("Device index out of range")
         device = track.devices[device_index]

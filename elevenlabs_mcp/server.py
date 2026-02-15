@@ -187,7 +187,7 @@ def speech_to_text(
     )
 
     if save_transcript_to_file:
-        with open(output_file, "w") as f:
+        with open(output_file, "w", encoding="utf-8") as f:
             f.write(transcription.text)
 
     if return_transcript_to_client_directly:

@@ -26,6 +26,7 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 #### Remote Script: Automation Handlers
 
 - **fix**: `_find_parameter` send-name parsing — restricted to well-formed single-letter send names (`^send\s*[a-z]$`); rejects false matches like "resend" or "send_abc".
+- **fix**: `create_clip_automation` — clip-level time clamping now uses `clip_length - 0.001` (was `clip_length`), consistent with `create_track_automation`'s epsilon; prevents inserting a breakpoint at the invalid clip-end position.
 
 #### Remote Script: Browser Handlers
 
@@ -44,6 +45,8 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 
 - **fix**: `_resolve_display_value_bruteforce` — detects float-range parameters and raises clear `ValueError` instead of infinite-looping.
 - **refactor**: 7 specialized device helpers (`_get_drum_rack`, `_get_rack_device`, `_get_compressor_device`, `_get_eq8_device`, `_get_hybrid_reverb_device`, `_get_transmute_device`, `_get_simpler_device`) now accept `track_type` parameter and use `resolve_track()` — all 17 public callers propagate `track_type`, enabling device operations on return and master tracks.
+- **fix**: `sliced_simpler_to_drum_rack` — now accepts `track_type` parameter and uses `resolve_track()` instead of `get_track()`, enabling Simpler-to-Drum-Rack conversion on return/master tracks.
+- **fix**: `control_looper` — now accepts `track_type` parameter and uses `resolve_track()` instead of `get_track()`, enabling looper control on return/master tracks.
 
 #### Remote Script: MIDI Handlers
 
@@ -74,6 +77,7 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `server.py` `add_knowledge_base_to_agent` — KB creation is now atomic: the agent-attach logic (agents.get → config traversal → kb append → agents.update) is wrapped in a try/except; on any failure, the newly-created KB document is deleted via `conversational_ai.knowledge_base.delete()` to prevent orphaned documents accumulating on the server. If the compensating delete itself fails, a warning is logged with the orphaned KB ID.
 - **fix**: `server.py` `make_outbound_call` — phone number PII: log now shows last 4 digits (`***1234`) instead of first 5 digits (country+area code).
 - **refactor**: `server.py` — renamed `output_file_name` → `output_file` across all tools; removed redundant `output_path / output_file` joins since `make_output_file` already returns an absolute Path.
+- **fix**: `server.py` `speech_to_text` — transcript file now opens with `encoding="utf-8"` so non-ASCII characters are preserved on all platforms.
 - **fix**: `convai.py` — `max_tokens` uses `if max_tokens is not None` instead of `if max_tokens` (allows 0).
 - **fix**: `model.py` — `ConvaiAgent` → `ConvAiAgent` for consistent capitalization.
 
@@ -83,19 +87,21 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `utils.py` `make_output_path` — containment check validates absolute `output_directory` against `base_path`.
 - **fix**: `utils.py` `handle_input_file` — validates absolute paths against `base_path`.
 - **fix**: `utils.py` `make_error` — added `-> NoReturn` return type annotation with `typing.NoReturn` import for static analysis correctness.
+- **fix**: `utils.py` `find_similar_filenames` — return type annotation corrected from `list[tuple[str, int]]` to `list[tuple[Path, int]]` (function actually returns `Path` objects, not strings).
 
 #### Documentation
 
 - **fix**: README — M4L tool count corrected from `+24` to `+38`.
 - **fix**: README — MD028 blank lines between blockquotes use `>` prefix.
 - **fix**: README — MD040 architecture code fence tagged with `text` language.
-- **fix**: README — tool count table subtotal corrected from 230 to 232 (per-category rows always summed to 232).
+- **fix**: README — tool counts unified: 230 core + 19 optional = 249 total; architecture section updated to 197 TCP/UDP + 35 M4L; flexibility section corrected to match.
 - **fix**: CHANGELOG — Transmute entry reworded from "(Not working already)" to "(Known broken — Ableton API limitation)".
 
 #### MCP Server
 
 - **fix**: `MCP_Server/__init__.py` — `__version__` updated from `"1.8.2"` to `"2.9.1"` to match pyproject.toml.
 - **fix**: `grid_notation.py` — unreachable `line.startswith(' ')` check (post-`strip()`) replaced with pre-strip check on raw line so indented lines are correctly skipped.
+- **fix**: `grid_notation.py` — `PREFERRED_LABELS` pitch 40 changed from `'SN'` to `'RM'` to match `DRUM_LABELS` where 40 maps to rimshot, preserving the distinct label.
 
 #### Package Metadata
 
@@ -104,9 +110,7 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `pyproject.toml` — elevenlabs optional-dependencies: pinned `httpx>=0.24.0` (minimum version supporting explicit `Timeout`); replaced `fuzzywuzzy` with `rapidfuzz` (C++ backend, no `python-Levenshtein` warning).
 - **fix**: `utils.py` — updated `from fuzzywuzzy import fuzz` → `from rapidfuzz import fuzz` (drop-in compatible `token_sort_ratio`).
 
-### Tool count correction: **232** + **19 optional** (ElevenLabs) = **251 total**
-
-Per-category tool counts always summed to 232; the subtotal of 230 reported in v2.8.0–v2.9.0 was a tabulation error (corrected in those entries above).
+### Tool count: **230** + **19 optional** (ElevenLabs) = **249 total**
 
 ---
 

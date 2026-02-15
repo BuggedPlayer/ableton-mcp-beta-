@@ -79,7 +79,7 @@ def make_output_path(
 
 def find_similar_filenames(
     target_file: str, directory: Path, threshold: int = 70
-) -> list[tuple[str, int]]:
+) -> list[tuple[Path, int]]:
     """
     Find files with names similar to the target file using fuzzy matching.
 
