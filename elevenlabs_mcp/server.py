@@ -289,6 +289,7 @@ def voice_clone(
     name: str, files: list[str], description: str = None
 ) -> TextContent:
     input_files = []
+    response = None
     try:
         for file in files:
             input_files.append(open(str(handle_input_file(file).absolute()), "rb"))
@@ -300,6 +301,8 @@ def voice_clone(
     finally:
         for f in input_files:
             f.close()
+    if response is None:
+        raise RuntimeError("voice_clone: API call did not return a response")
     logger.info("voice_clone: name=%s voice_id=%s", name, response.voice_id)
     return TextContent(
         type="text",

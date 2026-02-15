@@ -59,6 +59,18 @@ def generate_config(api_key: str | None = None):
     return config
 
 
+def _redact_config(config: dict) -> dict:
+    """Return a deep copy of config with secret values replaced by a placeholder."""
+    import copy
+    redacted = copy.deepcopy(config)
+    for _server_name, server_cfg in redacted.get("mcpServers", {}).items():
+        env = server_cfg.get("env", {})
+        for key in env:
+            if "KEY" in key.upper() or "SECRET" in key.upper() or "TOKEN" in key.upper():
+                env[key] = "***REDACTED***"
+    return redacted
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -80,7 +92,7 @@ if __name__ == "__main__":
     config = generate_config(args.api_key)
 
     if args.print:
-        print(json.dumps(config, indent=2))
+        print(json.dumps(_redact_config(config), indent=2))
     else:
         claude_path = args.config_path if args.config_path else get_claude_config_path()
         if claude_path is None:
