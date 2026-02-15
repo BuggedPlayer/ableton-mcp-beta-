@@ -754,7 +754,8 @@ class AbletonMCP(ControlSurface):
         try:
             self.schedule_message(0, main_thread_task)
         except AssertionError:
-            main_thread_task()
+            self.log_message("TCP command: schedule_message unavailable, returning error")
+            return {"status": "error", "message": "Ableton scheduling unavailable — try again shortly"}
 
         try:
             return response_queue.get(timeout=10.0)

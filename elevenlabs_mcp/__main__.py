@@ -1,15 +1,22 @@
 import os
 import json
+import logging
 from pathlib import Path
 import sys
 from dotenv import load_dotenv
 import argparse
 
+logger = logging.getLogger("ElevenLabs-MCP")
+
 load_dotenv()
 
 
 def get_claude_config_path() -> Path | None:
-    """Get the Claude config directory based on platform."""
+    """Get the Claude config directory based on platform.
+
+    Returns the expected path even if the directory doesn't exist yet
+    (first-time users). The caller is responsible for creating it.
+    """
     if sys.platform == "win32":
         path = Path(Path.home(), "AppData", "Roaming", "Claude")
     elif sys.platform == "darwin":
@@ -21,9 +28,7 @@ def get_claude_config_path() -> Path | None:
     else:
         return None
 
-    if path.exists():
-        return path
-    return None
+    return path
 
 
 def get_python_path():
@@ -115,7 +120,8 @@ if __name__ == "__main__":
             try:
                 with open(config_file, "r") as f:
                     existing = json.load(f)
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Could not read %s (%s), starting fresh", config_file, exc)
                 existing = {}
         else:
             existing = {}

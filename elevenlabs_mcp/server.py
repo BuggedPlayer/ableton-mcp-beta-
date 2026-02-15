@@ -454,6 +454,7 @@ def add_knowledge_base_to_agent(
         make_error("Must provide exactly one of: URL, file, or text")
 
     file = None
+    validated_path = None
     if text is not None:
         text_bytes = text.encode("utf-8")
         text_io = BytesIO(text_bytes)
@@ -461,10 +462,11 @@ def add_knowledge_base_to_agent(
         text_io.content_type = "text/plain"
         file = text_io
     elif input_file_path is not None:
-        path = handle_input_file(file_path=input_file_path, audio_content_check=False)
-        file = open(path, "rb")
+        validated_path = handle_input_file(file_path=input_file_path, audio_content_check=False)
 
     try:
+        if validated_path is not None:
+            file = open(validated_path, "rb")
         response = _get_client().conversational_ai.add_to_knowledge_base(
             name=knowledge_base_name,
             url=url,
@@ -496,7 +498,7 @@ def add_knowledge_base_to_agent(
             text=f"""Knowledge base created with ID: {response.id} and added to agent {agent_id} successfully.""",
         )
     finally:
-        if input_file_path is not None and file is not None:
+        if validated_path is not None and file is not None:
             file.close()
 
 

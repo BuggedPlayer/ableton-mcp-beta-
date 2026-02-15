@@ -4,6 +4,77 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.9.1 — 2026-02-15
+
+### Hardening Round 8 — Safety, Thread-Safety, Security & Correctness (30+ fixes)
+
+Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation. No new tools, no API changes.
+
+#### Remote Script: Thread-Safety
+
+- **fix**: TCP `schedule_message` fallback — when `schedule_message()` raises `AssertionError` (Ableton shutting down), no longer calls `main_thread_task()` inline from the client handler thread. Now logs and returns an error response, matching the UDP path behavior.
+- **fix**: UDP `schedule_message` fallback — same pattern: drops update with log message instead of executing on the wrong thread.
+- **fix**: UDP thread-safety — `self._song` is no longer captured on the UDP thread; all Live API access now happens inside `task()` closures that run on the main thread via `schedule_message`.
+
+#### Remote Script: Audio Handlers
+
+- **fix**: `freeze_track` / `unfreeze_track` — return `action_required: "manual_freeze"/"manual_unfreeze"` dict instead of `success: False`, since these are LOM limitations (not errors).
+- **fix**: Bare `except: pass` in audio sample enumeration replaced with `except Exception as sample_err:` + `ctrl.log_message()` with clip name.
+- **fix**: `get_audio_clip_info` / `analyze_audio_clip` — file path sanitized to basename only (prevents leaking local filesystem paths).
+- **fix**: `character_map` added missing key `3` ("pitched") for re_pitch warp mode; summary guard skips "unknown" warp character labels.
+
+#### Remote Script: Clip Handlers
+
+- **fix**: `add_notes_to_clip` Strategy 3 — returns `len(note_specs)` (notes added) not `len(live_notes)` (total notes).
+- **fix**: `add_warp_marker` — uses positional args `clip.add_warp_marker(bt)` / `clip.add_warp_marker(bt, sample_time)` instead of dict.
+
+#### Remote Script: Device Handlers
+
+- **fix**: `_resolve_display_value_bruteforce` — detects float-range parameters and raises clear `ValueError` instead of infinite-looping.
+
+#### Remote Script: MIDI Handlers
+
+- **fix**: `clear_clip_notes` — uses `clip.length + 1` for counting range (matches removal range).
+
+#### Remote Script: Session Handlers
+
+- **fix**: `set_song_settings` — full validate-then-apply pattern: all inputs validated into `validated{}` dict before mutating song state.
+
+#### Remote Script: Track Handlers
+
+- **fix**: `group_tracks` — raises `NotImplementedError` with guidance instead of returning silent `grouped: False`.
+
+#### ElevenLabs MCP: Security
+
+- **fix**: `__main__.py` — `--print` output now redacts API keys/secrets/tokens via `_redact_config()` deep-copy.
+- **fix**: `__main__.py` — config merge loads existing JSON and merges only the ElevenLabs server entry (was clobbering entire config).
+- **fix**: `__main__.py` — `get_claude_config_path()` now returns the platform-specific path even if directory doesn't exist (first-time users). Caller creates it via `mkdir(parents=True)`.
+- **fix**: `__main__.py` — corrupt/unreadable config file now logs a warning via `logger.warning()` before falling back to `{}`.
+- **fix**: `__main__.py` — accepts file path argument (resolves to parent directory).
+
+#### ElevenLabs MCP: Reliability
+
+- **fix**: `server.py` `voice_clone` — `response = None` initialization + post-finally guard prevents `UnboundLocalError` when API call fails.
+- **fix**: `server.py` `add_knowledge_base_to_agent` — file handle leak fixed: `open()` moved inside `try` block so `finally` always closes it. Path validation (`handle_input_file`) runs first, outside the try.
+- **fix**: `convai.py` — `max_tokens` uses `if max_tokens is not None` instead of `if max_tokens` (allows 0).
+- **fix**: `model.py` — `ConvaiAgent` → `ConvAiAgent` for consistent capitalization.
+
+#### ElevenLabs MCP: Path Safety
+
+- **fix**: `utils.py` `make_output_file` — exception chaining: `raise ... from err` preserves original traceback.
+- **fix**: `utils.py` `make_output_path` — containment check validates absolute `output_directory` against `base_path`.
+- **fix**: `utils.py` `handle_input_file` — validates absolute paths against `base_path`.
+
+#### Documentation
+
+- **fix**: README — M4L tool count corrected from `+24` to `+38`.
+- **fix**: README — MD028 blank lines between blockquotes use `>` prefix.
+- **fix**: README — MD040 architecture code fence tagged with `text` language.
+
+### No tool count change — Total tools: **230** + **19 optional** (ElevenLabs) = **249 total**
+
+---
+
 ## v2.9.0 — 2026-02-14
 
 ### Performance & Code Quality Sweep
