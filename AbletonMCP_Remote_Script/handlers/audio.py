@@ -28,6 +28,9 @@ def get_audio_clip_info(song, track_index, clip_index, ctrl=None):
         if hasattr(clip, "warp_mode"):
             warp_mode = warp_mode_map.get(clip.warp_mode, "unknown")
 
+        raw_path = getattr(clip, "file_path", None)
+        safe_name = str(raw_path).replace("\\", "/").rsplit("/", 1)[-1] if raw_path else None
+
         return {
             "name": clip.name,
             "length": clip.length,
@@ -39,7 +42,7 @@ def get_audio_clip_info(song, track_index, clip_index, ctrl=None):
             "loop_start": getattr(clip, "loop_start", None),
             "loop_end": getattr(clip, "loop_end", None),
             "gain": getattr(clip, "gain", None),
-            "file_path": getattr(clip, "file_path", None),
+            "file_path": safe_name,
         }
     except Exception as e:
         if ctrl:
@@ -119,13 +122,16 @@ def analyze_audio_clip(song, track_index, clip_index, ctrl=None):
             3: "re_pitch", 4: "complex", 5: "complex_pro",
         }
 
+        raw_path = getattr(clip, "file_path", None)
+        safe_name = str(raw_path).replace("\\", "/").rsplit("/", 1)[-1] if raw_path else None
+
         analysis = {
             "basic_info": {
                 "name": clip.name,
                 "length_beats": clip.length,
                 "loop_start": getattr(clip, "loop_start", None),
                 "loop_end": getattr(clip, "loop_end", None),
-                "file_path": getattr(clip, "file_path", None),
+                "file_path": safe_name,
             },
             "tempo_rhythm": {
                 "warping_enabled": getattr(clip, "warping", None),

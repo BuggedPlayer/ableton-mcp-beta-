@@ -61,6 +61,15 @@ def make_output_path(
                     output_directory))
     else:
         output_path = Path(os.path.expanduser(output_directory)).resolve()
+        # Enforce containment when base_path is configured
+        if base_path:
+            resolved_base = Path(os.path.expanduser(base_path)).resolve()
+            try:
+                output_path.relative_to(resolved_base)
+            except ValueError:
+                make_error(
+                    "Output directory ({0}) is outside the configured base path".format(
+                        output_directory))
     output_path.mkdir(parents=True, exist_ok=True)
     if not is_file_writeable(output_path):
         make_error("Directory ({0}) is not writeable".format(output_directory or "~/Desktop"))
