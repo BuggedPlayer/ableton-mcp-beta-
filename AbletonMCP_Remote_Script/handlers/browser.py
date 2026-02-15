@@ -107,7 +107,11 @@ def get_browser_item(song, uri, path, ctrl=None):
                 if not part:
                     continue
                 found = False
+                count = 0
                 for child in current_item.children:
+                    if count >= _MAX_CHILDREN:
+                        break
+                    count += 1
                     if child.name.lower() == part.lower():
                         current_item = child
                         found = True
@@ -425,7 +429,11 @@ def get_browser_items_at_path(song, path, ctrl=None):
                     "items": [],
                 }
             found = False
+            count = 0
             for child in current_item.children:
+                if count >= _MAX_CHILDREN:
+                    break
+                count += 1
                 if hasattr(child, "name") and child.name.lower() == part.lower():
                     current_item = child
                     found = True

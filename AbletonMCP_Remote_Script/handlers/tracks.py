@@ -651,6 +651,15 @@ def insert_device(song, track_index, device_name, target_index=None, ctrl=None):
     """
     try:
         track = get_track(song, track_index)
+        if not hasattr(track, "insert_device"):
+            msg = "insert_device not supported (requires Live 12.3+)"
+            if ctrl:
+                ctrl.log_message(msg)
+            return {
+                "inserted": False,
+                "reason": msg,
+                "track_index": track_index,
+            }
         if target_index is not None:
             track.insert_device(str(device_name), int(target_index))
         else:

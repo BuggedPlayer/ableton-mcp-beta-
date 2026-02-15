@@ -120,21 +120,32 @@ def set_song_time(song, time, ctrl=None):
 def set_song_loop(song, enabled, start, length, ctrl=None):
     """Control arrangement loop bracket."""
     try:
+        # Validate all inputs before mutating
+        v_enabled = None
+        v_start = None
+        v_length = None
         if enabled is not None:
-            song.loop = bool(enabled)
+            v_enabled = bool(enabled)
         if start is not None:
-            song.loop_start = max(0.0, float(start))
+            v_start = max(0.0, float(start))
         if length is not None:
-            length_val = float(length)
-            if length_val <= 0:
-                raise ValueError("Loop length must be positive, got {0}".format(length_val))
-            song.loop_length = length_val
-        # Return the values we SET (not read-back, which can be stale)
-        result = {}
-        result["loop_enabled"] = bool(enabled) if enabled is not None else song.loop
-        result["loop_start"] = max(0.0, float(start)) if start is not None else song.loop_start
-        result["loop_length"] = float(length) if length is not None else song.loop_length
-        return result
+            v_length = float(length)
+            if v_length <= 0:
+                raise ValueError("Loop length must be positive, got {0}".format(v_length))
+
+        # Apply validated values
+        if v_enabled is not None:
+            song.loop = v_enabled
+        if v_start is not None:
+            song.loop_start = v_start
+        if v_length is not None:
+            song.loop_length = v_length
+
+        return {
+            "loop_enabled": v_enabled if v_enabled is not None else song.loop,
+            "loop_start": v_start if v_start is not None else song.loop_start,
+            "loop_length": v_length if v_length is not None else song.loop_length,
+        }
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error setting song loop: " + str(e))

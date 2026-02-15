@@ -7832,42 +7832,39 @@ def add_warp_marker(ctx: Context, track_index: int, clip_index: int,
 @mcp.tool()
 @_tool_handler("moving warp marker")
 def move_warp_marker(ctx: Context, track_index: int, clip_index: int,
-                      marker_index: int, beat_time: float,
-                      sample_time: float = None) -> str:
-    """Move an existing warp marker to a new position.
+                      beat_time: float, beat_time_distance: float) -> str:
+    """Move a warp marker by a beat-time distance.
 
     Parameters:
     - track_index: Track containing the audio clip
     - clip_index: Clip slot index
-    - marker_index: Index of the warp marker to move (from get_warp_markers)
-    - beat_time: New beat position
-    - sample_time: New sample position (optional)
+    - beat_time: Beat position of the warp marker to move
+    - beat_time_distance: Amount (in beats) to shift the marker
     """
-    params = {"track_index": track_index, "clip_index": clip_index,
-              "marker_index": marker_index, "beat_time": beat_time}
-    if sample_time is not None:
-        params["sample_time"] = sample_time
     ableton = get_ableton_connection()
-    result = ableton.send_command("move_warp_marker", params)
-    return f"Warp marker {marker_index} moved to beat {beat_time}"
+    result = ableton.send_command("move_warp_marker", {
+        "track_index": track_index, "clip_index": clip_index,
+        "beat_time": beat_time, "beat_time_distance": beat_time_distance
+    })
+    return f"Warp marker at beat {beat_time} moved by {beat_time_distance}"
 
 @mcp.tool()
 @_tool_handler("removing warp marker")
 def remove_warp_marker(ctx: Context, track_index: int, clip_index: int,
-                        marker_index: int) -> str:
-    """Remove a warp marker from an audio clip.
+                        beat_time: float) -> str:
+    """Remove a warp marker from an audio clip by beat position.
 
     Parameters:
     - track_index: Track containing the audio clip
     - clip_index: Clip slot index
-    - marker_index: Index of the warp marker to remove (from get_warp_markers)
+    - beat_time: Beat position of the warp marker to remove
     """
     ableton = get_ableton_connection()
     result = ableton.send_command("remove_warp_marker", {
         "track_index": track_index, "clip_index": clip_index,
-        "marker_index": marker_index
+        "beat_time": beat_time
     })
-    return f"Warp marker {marker_index} removed"
+    return f"Warp marker at beat {beat_time} removed"
 
 # ======================================================================
 # Tuning System

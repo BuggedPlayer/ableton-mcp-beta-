@@ -190,6 +190,10 @@ def set_device_parameter(
         # Resolve display string to raw value if provided
         if value_display is not None:
             value = _resolve_display_value(target_param, value_display, ctrl)
+        else:
+            value = float(value)
+            if getattr(target_param, "is_quantized", False):
+                value = int(round(value))
 
         # Clamp value to valid range
         clamped = max(target_param.min, min(target_param.max, value))
@@ -258,6 +262,10 @@ def set_device_parameters_batch(
                 except ValueError as ve:
                     results.append({"name": pname, "error": str(ve)})
                     continue
+            else:
+                pvalue = float(pvalue)
+                if getattr(target, "is_quantized", False):
+                    pvalue = int(round(pvalue))
             clamped = max(target.min, min(target.max, pvalue))
             target.value = clamped
             entry_result = {"name": target.name, "value": target.value, "clamped": clamped != pvalue}

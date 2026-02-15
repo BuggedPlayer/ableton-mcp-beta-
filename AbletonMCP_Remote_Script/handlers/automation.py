@@ -233,7 +233,7 @@ def create_track_automation(song, track_index, parameter_name, automation_points
             )
 
         # Determine the time span the caller wants to automate
-        times = [float(p["time"]) for p in automation_points]
+        times = [float(p.get("time", 0.0)) for p in automation_points]
         if not times:
             return {
                 "parameter": parameter_name,
@@ -281,8 +281,8 @@ def create_track_automation(song, track_index, parameter_name, automation_points
             )
 
         for point in automation_points:
-            time_val = max(clip_start, min(clip_end - 0.001, float(point["time"])))
-            value = max(parameter.min, min(parameter.max, float(point["value"])))
+            time_val = max(clip_start, min(clip_end - 0.001, float(point.get("time", 0.0))))
+            value = max(parameter.min, min(parameter.max, float(point.get("value", 0.0))))
             envelope.insert_step(time_val, 0.0, value)
 
         return {

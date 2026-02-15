@@ -682,26 +682,22 @@ def add_warp_marker(song, track_index, clip_index, beat_time, sample_time=None, 
         raise
 
 
-def move_warp_marker(song, track_index, clip_index, marker_index, beat_time, sample_time=None, ctrl=None):
-    """Move a warp marker to a new position.
+def move_warp_marker(song, track_index, clip_index, beat_time, beat_time_distance, ctrl=None):
+    """Move a warp marker by a beat-time distance.
 
     Args:
-        marker_index: Index of the warp marker to move.
-        beat_time: New beat position.
-        sample_time: New sample position (optional).
+        beat_time: Beat position of the warp marker to move.
+        beat_time_distance: Amount (in beats) to shift the marker.
     """
     try:
         _, clip = get_clip(song, track_index, clip_index)
         if not clip.is_audio_clip:
             raise ValueError("Warp markers are only available on audio clips")
-        if sample_time is not None:
-            clip.move_warp_marker(int(marker_index), float(beat_time), float(sample_time))
-        else:
-            clip.move_warp_marker(int(marker_index), float(beat_time))
+        clip.move_warp_marker(float(beat_time), float(beat_time_distance))
         return {
             "moved": True,
-            "marker_index": int(marker_index),
             "beat_time": float(beat_time),
+            "beat_time_distance": float(beat_time_distance),
         }
     except Exception as e:
         if ctrl:
@@ -709,20 +705,20 @@ def move_warp_marker(song, track_index, clip_index, marker_index, beat_time, sam
         raise
 
 
-def remove_warp_marker(song, track_index, clip_index, marker_index, ctrl=None):
+def remove_warp_marker(song, track_index, clip_index, beat_time, ctrl=None):
     """Remove a warp marker from an audio clip.
 
     Args:
-        marker_index: Index of the warp marker to remove.
+        beat_time: Beat position of the warp marker to remove.
     """
     try:
         _, clip = get_clip(song, track_index, clip_index)
         if not clip.is_audio_clip:
             raise ValueError("Warp markers are only available on audio clips")
-        clip.remove_warp_marker(int(marker_index))
+        clip.remove_warp_marker(float(beat_time))
         return {
             "removed": True,
-            "marker_index": int(marker_index),
+            "beat_time": float(beat_time),
         }
     except Exception as e:
         if ctrl:
