@@ -469,11 +469,13 @@ def add_knowledge_base_to_agent(
         conv_cfg = getattr(agent, "conversation_config", None)
         agent_cfg = getattr(conv_cfg, "agent", None) if conv_cfg else None
         prompt_cfg = getattr(agent_cfg, "prompt", None) if agent_cfg else None
-        kb_list = getattr(prompt_cfg, "knowledge_base", None) if prompt_cfg else None
+        if prompt_cfg is None:
+            make_error(
+                "Agent {0} has no prompt configuration — cannot attach knowledge base".format(agent_id))
+        kb_list = getattr(prompt_cfg, "knowledge_base", None)
         if not isinstance(kb_list, list):
             kb_list = []
-            if prompt_cfg is not None:
-                prompt_cfg.knowledge_base = kb_list
+            prompt_cfg.knowledge_base = kb_list
         kb_list.append(
             KnowledgeBaseLocator(
                 type="file" if file else "url",
