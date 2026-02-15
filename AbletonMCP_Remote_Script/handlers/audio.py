@@ -167,7 +167,8 @@ def analyze_audio_clip(song, track_index, clip_index, ctrl=None):
         # Frequency hints from warp mode
         if hasattr(clip, "warp_mode"):
             character_map = {
-                0: "percussive", 1: "tonal", 2: "textural", 4: "full_spectrum", 5: "full_spectrum",
+                0: "percussive", 1: "tonal", 2: "textural",
+                3: "pitched", 4: "full_spectrum", 5: "full_spectrum",
             }
             analysis["frequency_analysis"]["character"] = character_map.get(clip.warp_mode, "unknown")
 
@@ -177,8 +178,9 @@ def analyze_audio_clip(song, track_index, clip_index, ctrl=None):
             parts.append("warped audio")
         else:
             parts.append("unwarped audio")
-        if analysis["frequency_analysis"].get("character"):
-            parts.append(analysis["frequency_analysis"]["character"] + " character")
+        char = analysis["frequency_analysis"].get("character")
+        if char and char != "unknown":
+            parts.append(char + " character")
         analysis["summary"] = ", ".join(parts).capitalize()
 
         return analysis
