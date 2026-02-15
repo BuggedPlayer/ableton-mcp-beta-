@@ -47,8 +47,20 @@ def _resolve_display_value_bruteforce(param, display_string, ctrl=None):
     """
     target_norm = _normalize_display(display_string)
 
-    lo = int(param.min)
-    hi = int(param.max)
+    # Detect float-range params where integer stepping is meaningless
+    pmin, pmax = param.min, param.max
+    is_float_range = (
+        (pmin != int(pmin) or pmax != int(pmax))
+        or (pmax - pmin < 1 and not getattr(param, "is_quantized", False))
+    )
+    if is_float_range:
+        raise ValueError(
+            "value_display resolution is only supported for integer-step params. "
+            "'{0}' has a continuous range ({1}-{2}); use a numeric value instead.".format(
+                param.name, pmin, pmax))
+
+    lo = int(pmin)
+    hi = int(pmax)
     span = hi - lo + 1
 
     if ctrl:

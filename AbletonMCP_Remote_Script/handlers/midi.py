@@ -236,8 +236,8 @@ def clear_clip_notes(song, track_index, clip_index, ctrl=None):
     try:
         clip = _get_midi_clip(song, track_index, clip_index)
 
-        # Count notes before removing
-        notes_before = clip.get_notes(0, 0, clip.length, 128)
+        # Count notes before removing (use clip.length + 1 to match removal range)
+        notes_before = clip.get_notes(0, 0, clip.length + 1, 128)
         notes_count = len(notes_before)
 
         # Remove all notes -- try Live 11+ API first, fall back to legacy

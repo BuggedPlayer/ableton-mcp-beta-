@@ -23,7 +23,7 @@ def create_conversation_config(
                 "tools": [{"type": "system", "name": "end_call", "description": ""}],
                 "knowledge_base": [],
                 "temperature": temperature,
-                **({"max_tokens": max_tokens} if max_tokens else {}),
+                **({"max_tokens": max_tokens} if max_tokens is not None else {}),
             },
             **({"first_message": first_message} if first_message else {}),
             "dynamic_variables": {"dynamic_variable_placeholders": {}},

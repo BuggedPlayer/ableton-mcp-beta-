@@ -295,15 +295,12 @@ def group_tracks(song, track_indices, name, ctrl=None):
         song.view.selected_track = song.tracks[track_indices[0]]
         if ctrl:
             ctrl.log_message(
-                "Grouping requested for '{0}' - not supported by API; selected track {1}".format(
+                "Grouping requested for '{0}' — not supported by Remote Script API; "
+                "selected track {1}. Use Edit > Group Tracks in Ableton.".format(
                     name, track_indices[0]))
-        return {
-            "grouped": False,
-            "reason": "grouping not supported by Remote Script API",
-            "selected_track_index": track_indices[0],
-            "track_count": len(track_indices),
-            "name": name,
-        }
+        raise NotImplementedError(
+            "Track grouping is not available via the Remote Script API. "
+            "Select the tracks in Ableton and use Edit > Group Tracks (Ctrl+G / Cmd+G).")
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error grouping tracks: " + str(e))

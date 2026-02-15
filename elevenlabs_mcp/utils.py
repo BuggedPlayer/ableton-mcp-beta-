@@ -39,9 +39,9 @@ def make_output_file(
     # Ensure the file stays within the output directory
     try:
         output_file.relative_to(output_path.resolve())
-    except ValueError:
+    except ValueError as err:
         raise ElevenLabsMcpError(
-            "Generated filename escapes output directory")
+            "Generated filename escapes output directory") from err
     return output_file
 
 
@@ -149,6 +149,15 @@ def handle_input_file(file_path: str, audio_content_check: bool = True) -> Path:
                 "File path ({0}) escapes base path".format(file_path))
     else:
         path = Path(file_path).resolve()
+        # Validate absolute paths against base_path when configured
+        if base_path:
+            resolved_base = Path(os.path.expanduser(base_path)).resolve()
+            try:
+                path.relative_to(resolved_base)
+            except ValueError:
+                make_error(
+                    "File path ({0}) is outside the configured base path".format(
+                        path.name))
     if not path.exists() and path.parent.exists():
         parent_directory = path.parent
         similar_files = try_find_similar_files(path.name, parent_directory)

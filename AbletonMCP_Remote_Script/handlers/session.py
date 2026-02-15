@@ -531,51 +531,73 @@ def set_song_settings(song, signature_numerator=None, signature_denominator=None
                        session_automation_record=None, ctrl=None):
     """Set global song settings."""
     try:
-        changes = {}
+        # Phase 1: validate all inputs into local vars before mutating song
+        validated = {}
         if signature_numerator is not None:
             val = int(signature_numerator)
             if val < 1 or val > 99:
                 raise ValueError("signature_numerator must be 1-99, got {0}".format(val))
-            song.signature_numerator = val
-            changes["signature_numerator"] = val
+            validated["signature_numerator"] = val
         if signature_denominator is not None:
             val = int(signature_denominator)
             if val not in (1, 2, 4, 8, 16):
                 raise ValueError("signature_denominator must be 1, 2, 4, 8, or 16, got {0}".format(val))
-            song.signature_denominator = val
-            changes["signature_denominator"] = val
+            validated["signature_denominator"] = val
         if swing_amount is not None:
             val = float(swing_amount)
             if val < 0.0 or val > 1.0:
                 raise ValueError("swing_amount must be 0.0-1.0, got {0}".format(val))
-            song.swing_amount = val
-            changes["swing_amount"] = val
+            validated["swing_amount"] = val
         if clip_trigger_quantization is not None:
             val = int(clip_trigger_quantization)
             if val < 0 or val > 13:
                 raise ValueError("clip_trigger_quantization must be 0-13 (Live RecordingQuantization enum), got {0}".format(val))
-            song.clip_trigger_quantization = val
-            changes["clip_trigger_quantization"] = val
+            validated["clip_trigger_quantization"] = val
         if midi_recording_quantization is not None:
             val = int(midi_recording_quantization)
             if val < 0 or val > 13:
                 raise ValueError("midi_recording_quantization must be 0-13 (Live RecordingQuantization enum), got {0}".format(val))
-            song.midi_recording_quantization = val
-            changes["midi_recording_quantization"] = val
+            validated["midi_recording_quantization"] = val
         if back_to_arranger is not None:
-            song.back_to_arranger = bool(back_to_arranger)
-            changes["back_to_arranger"] = bool(back_to_arranger)
+            validated["back_to_arranger"] = bool(back_to_arranger)
         if follow_song is not None:
-            song.view.follow_song = bool(follow_song)
-            changes["follow_song"] = bool(follow_song)
+            validated["follow_song"] = bool(follow_song)
         if draw_mode is not None:
-            song.view.draw_mode = bool(draw_mode)
-            changes["draw_mode"] = bool(draw_mode)
+            validated["draw_mode"] = bool(draw_mode)
         if session_automation_record is not None:
-            song.session_automation_record = bool(session_automation_record)
-            changes["session_automation_record"] = bool(session_automation_record)
-        if not changes:
+            validated["session_automation_record"] = bool(session_automation_record)
+        if not validated:
             raise ValueError("No parameters specified")
+
+        # Phase 2: apply all validated values
+        changes = {}
+        if "signature_numerator" in validated:
+            song.signature_numerator = validated["signature_numerator"]
+            changes["signature_numerator"] = validated["signature_numerator"]
+        if "signature_denominator" in validated:
+            song.signature_denominator = validated["signature_denominator"]
+            changes["signature_denominator"] = validated["signature_denominator"]
+        if "swing_amount" in validated:
+            song.swing_amount = validated["swing_amount"]
+            changes["swing_amount"] = validated["swing_amount"]
+        if "clip_trigger_quantization" in validated:
+            song.clip_trigger_quantization = validated["clip_trigger_quantization"]
+            changes["clip_trigger_quantization"] = validated["clip_trigger_quantization"]
+        if "midi_recording_quantization" in validated:
+            song.midi_recording_quantization = validated["midi_recording_quantization"]
+            changes["midi_recording_quantization"] = validated["midi_recording_quantization"]
+        if "back_to_arranger" in validated:
+            song.back_to_arranger = validated["back_to_arranger"]
+            changes["back_to_arranger"] = validated["back_to_arranger"]
+        if "follow_song" in validated:
+            song.view.follow_song = validated["follow_song"]
+            changes["follow_song"] = validated["follow_song"]
+        if "draw_mode" in validated:
+            song.view.draw_mode = validated["draw_mode"]
+            changes["draw_mode"] = validated["draw_mode"]
+        if "session_automation_record" in validated:
+            song.session_automation_record = validated["session_automation_record"]
+            changes["session_automation_record"] = validated["session_automation_record"]
         return changes
     except Exception as e:
         if ctrl:

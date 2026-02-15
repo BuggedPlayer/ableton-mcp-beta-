@@ -73,7 +73,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config-path",
         type=Path,
-        help="Custom path to Claude config directory",
+        help="Custom path to the directory containing claude_desktop_config.json",
     )
     args = parser.parse_args()
 
@@ -85,11 +85,35 @@ if __name__ == "__main__":
         claude_path = args.config_path if args.config_path else get_claude_config_path()
         if claude_path is None:
             print(
-                "Could not find Claude config path automatically. Please specify it using --config-path argument. The argument should be an absolute path of the claude_desktop_config.json file."
+                "Could not find Claude config path automatically. Please specify it "
+                "using --config-path argument. The argument should be the directory "
+                "containing claude_desktop_config.json."
             )
             sys.exit(1)
 
+        # If user passed a file path, resolve to its parent directory
+        if claude_path.suffix == ".json":
+            claude_path = claude_path.parent
+
         claude_path.mkdir(parents=True, exist_ok=True)
-        print("Writing config to", claude_path / "claude_desktop_config.json")
-        with open(claude_path / "claude_desktop_config.json", "w") as f:
-            json.dump(config, f, indent=2)
+        config_file = claude_path / "claude_desktop_config.json"
+
+        # Merge into existing config instead of clobbering
+        if config_file.exists():
+            try:
+                with open(config_file, "r") as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+        else:
+            existing = {}
+
+        if "mcpServers" not in existing:
+            existing["mcpServers"] = {}
+        # Merge our server entries into the existing mcpServers
+        for server_name, server_cfg in config.get("mcpServers", {}).items():
+            existing["mcpServers"][server_name] = server_cfg
+
+        print("Writing config to", config_file)
+        with open(config_file, "w") as f:
+            json.dump(existing, f, indent=2)

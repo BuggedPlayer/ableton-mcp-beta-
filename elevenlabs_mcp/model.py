@@ -14,7 +14,7 @@ class ConvAiAgentListItem(BaseModel):
     agent_id: str
 
 
-class ConvaiAgent(BaseModel):
+class ConvAiAgent(BaseModel):
     name: str
     agent_id: str
     system_prompt: str

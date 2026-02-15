@@ -80,7 +80,7 @@ def add_notes_to_clip(song, track_index, clip_index, notes, ctrl=None):
         for s in note_specs:
             live_notes.append((s["pitch"], s["start_time"], s["duration"], int(s["velocity"]), s["mute"]))
         clip.set_notes(tuple(live_notes))
-        return {"note_count": len(live_notes)}
+        return {"note_count": len(note_specs)}
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error adding notes to clip: " + str(e))
@@ -671,14 +671,15 @@ def add_warp_marker(song, track_index, clip_index, beat_time, sample_time=None, 
         _, clip = get_clip(song, track_index, clip_index)
         if not clip.is_audio_clip:
             raise ValueError("Warp markers are only available on audio clips")
-        marker = {"beat_time": float(beat_time)}
+        bt = float(beat_time)
         if sample_time is not None:
-            marker["sample_time"] = float(sample_time)
-        clip.add_warp_marker(marker)
+            clip.add_warp_marker(bt, float(sample_time))
+        else:
+            clip.add_warp_marker(bt)
         return {
             "added": True,
-            "beat_time": marker["beat_time"],
-            "sample_time": marker.get("sample_time"),
+            "beat_time": bt,
+            "sample_time": float(sample_time) if sample_time is not None else None,
         }
     except Exception as e:
         if ctrl:

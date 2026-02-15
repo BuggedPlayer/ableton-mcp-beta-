@@ -152,8 +152,11 @@ def analyze_audio_clip(song, track_index, clip_index, ctrl=None):
                 if hasattr(sample, "channels"):
                     analysis["audio_properties"]["channels"] = sample.channels
                     analysis["audio_properties"]["is_stereo"] = sample.channels == 2
-            except Exception:
-                pass
+            except Exception as sample_err:
+                if ctrl:
+                    ctrl.log_message(
+                        "Error reading sample properties for clip '{0}': {1}".format(
+                            getattr(clip, 'name', '?'), sample_err))
 
         # Frequency hints from warp mode
         if hasattr(clip, "warp_mode"):
@@ -199,10 +202,11 @@ def freeze_track(song, track_index, ctrl=None):
                 "Track '{0}' cannot be frozen (may be a return/master track or have no devices)".format(track.name))
 
         return {
-            "success": False,
+            "success": True,
             "track_index": track_index,
             "frozen": False,
             "track_name": track.name,
+            "action_required": "manual_freeze",
             "message": "Track freezing is not available via the Live Object Model API. "
                        "Use Ableton's Edit menu or right-click the track header to freeze.",
         }
@@ -227,10 +231,11 @@ def unfreeze_track(song, track_index, ctrl=None):
             }
 
         return {
-            "success": False,
+            "success": True,
             "track_index": track_index,
             "frozen": True,
             "track_name": track.name,
+            "action_required": "manual_unfreeze",
             "message": "Track unfreezing is not available via the Live Object Model API. "
                        "Use Ableton's Edit menu or right-click the track header to unfreeze.",
         }
