@@ -397,9 +397,9 @@ def set_macro_value(song, track_index, device_index, macro_index, value, track_t
 # --- Drum Pad Operations ---
 
 
-def _get_drum_rack(song, track_index, device_index):
+def _get_drum_rack(song, track_index, device_index, track_type="track"):
     """Resolve a drum rack device, raising if not found or not a drum rack."""
-    track = get_track(song, track_index)
+    track = resolve_track(song, track_index, track_type)
     if device_index < 0 or device_index >= len(track.devices):
         raise IndexError("Device index out of range")
     device = track.devices[device_index]
@@ -408,10 +408,10 @@ def _get_drum_rack(song, track_index, device_index):
     return device
 
 
-def get_drum_pads(song, track_index, device_index, ctrl=None):
+def get_drum_pads(song, track_index, device_index, track_type="track", ctrl=None):
     """Get drum pad info from a drum rack device."""
     try:
-        device = _get_drum_rack(song, track_index, device_index)
+        device = _get_drum_rack(song, track_index, device_index, track_type)
         pads = []
         for pad in device.drum_pads:
             pad_info = {
@@ -438,10 +438,10 @@ def get_drum_pads(song, track_index, device_index, ctrl=None):
         raise
 
 
-def set_drum_pad(song, track_index, device_index, note, mute=None, solo=None, ctrl=None):
+def set_drum_pad(song, track_index, device_index, note, mute=None, solo=None, track_type="track", ctrl=None):
     """Set mute/solo on a drum pad by MIDI note number."""
     try:
-        device = _get_drum_rack(song, track_index, device_index)
+        device = _get_drum_rack(song, track_index, device_index, track_type)
         note = int(note)
         target_pad = None
         for pad in device.drum_pads:
@@ -466,10 +466,10 @@ def set_drum_pad(song, track_index, device_index, note, mute=None, solo=None, ct
         raise
 
 
-def copy_drum_pad(song, track_index, device_index, source_note, dest_note, ctrl=None):
+def copy_drum_pad(song, track_index, device_index, source_note, dest_note, track_type="track", ctrl=None):
     """Copy drum pad contents from source to destination note."""
     try:
-        device = _get_drum_rack(song, track_index, device_index)
+        device = _get_drum_rack(song, track_index, device_index, track_type)
         source_note = int(source_note)
         dest_note = int(dest_note)
         if not hasattr(device, 'copy_pad'):
@@ -498,9 +498,9 @@ def copy_drum_pad(song, track_index, device_index, source_note, dest_note, ctrl=
 # --- Rack Macro Variations ---
 
 
-def _get_rack_device(song, track_index, device_index):
+def _get_rack_device(song, track_index, device_index, track_type="track"):
     """Resolve a rack device, raising if not a rack."""
-    track = get_track(song, track_index)
+    track = resolve_track(song, track_index, track_type)
     if device_index < 0 or device_index >= len(track.devices):
         raise IndexError("Device index out of range")
     device = track.devices[device_index]
@@ -509,10 +509,10 @@ def _get_rack_device(song, track_index, device_index):
     return device
 
 
-def get_rack_variations(song, track_index, device_index, ctrl=None):
+def get_rack_variations(song, track_index, device_index, track_type="track", ctrl=None):
     """Read variation count, selected index, and macro mapping status."""
     try:
-        device = _get_rack_device(song, track_index, device_index)
+        device = _get_rack_device(song, track_index, device_index, track_type)
         return {
             "device_name": device.name,
             "track_index": track_index,
@@ -527,7 +527,7 @@ def get_rack_variations(song, track_index, device_index, ctrl=None):
         raise
 
 
-def rack_variation_action(song, track_index, device_index, action, variation_index=None, ctrl=None):
+def rack_variation_action(song, track_index, device_index, action, variation_index=None, track_type="track", ctrl=None):
     """Perform a variation action on a rack device.
 
     Args:
@@ -535,7 +535,7 @@ def rack_variation_action(song, track_index, device_index, action, variation_ind
         variation_index: Required for 'recall' and 'delete'. Sets selected_variation_index first.
     """
     try:
-        device = _get_rack_device(song, track_index, device_index)
+        device = _get_rack_device(song, track_index, device_index, track_type)
         result = {"device_name": device.name, "action": action}
         if action == "store":
             device.store_variation()
@@ -595,9 +595,9 @@ def sliced_simpler_to_drum_rack(song, track_index, device_index, ctrl=None):
 # --- Compressor Side-Chain Routing ---
 
 
-def _get_compressor_device(song, track_index, device_index):
+def _get_compressor_device(song, track_index, device_index, track_type="track"):
     """Resolve a Compressor device, raising if not found or not a Compressor."""
-    track = get_track(song, track_index)
+    track = resolve_track(song, track_index, track_type)
     if device_index < 0 or device_index >= len(track.devices):
         raise IndexError("Device index out of range")
     device = track.devices[device_index]
@@ -622,10 +622,10 @@ def _get_sidechain_io(device):
     return None
 
 
-def get_compressor_sidechain(song, track_index, device_index, ctrl=None):
+def get_compressor_sidechain(song, track_index, device_index, track_type="track", ctrl=None):
     """Get side-chain routing info from a Compressor device."""
     try:
-        device = _get_compressor_device(song, track_index, device_index)
+        device = _get_compressor_device(song, track_index, device_index, track_type)
         result = {
             "device_name": device.name,
             "track_index": track_index,
@@ -686,7 +686,7 @@ def get_compressor_sidechain(song, track_index, device_index, ctrl=None):
 
 
 def set_compressor_sidechain(song, track_index, device_index,
-                              input_type=None, input_channel=None, ctrl=None):
+                              input_type=None, input_channel=None, track_type="track", ctrl=None):
     """Set side-chain routing on a Compressor device by display name.
 
     Uses the DeviceIO path (device.input_routings[0]) which exposes writable
@@ -694,7 +694,7 @@ def set_compressor_sidechain(song, track_index, device_index,
     CompressorDevice itself.
     """
     try:
-        device = _get_compressor_device(song, track_index, device_index)
+        device = _get_compressor_device(song, track_index, device_index, track_type)
         sidechain_io = _get_sidechain_io(device)
         if sidechain_io is None:
             raise Exception(
@@ -732,9 +732,9 @@ def set_compressor_sidechain(song, track_index, device_index,
 # --- EQ8 Controls ---
 
 
-def _get_eq8_device(song, track_index, device_index):
+def _get_eq8_device(song, track_index, device_index, track_type="track"):
     """Resolve an EQ Eight device, raising if not found or not an EQ Eight."""
-    track = get_track(song, track_index)
+    track = resolve_track(song, track_index, track_type)
     if device_index < 0 or device_index >= len(track.devices):
         raise IndexError("Device index out of range")
     device = track.devices[device_index]
@@ -744,10 +744,10 @@ def _get_eq8_device(song, track_index, device_index):
     return device
 
 
-def get_eq8_properties(song, track_index, device_index, ctrl=None):
+def get_eq8_properties(song, track_index, device_index, track_type="track", ctrl=None):
     """Get EQ8-specific properties: edit_mode, global_mode, oversample, selected_band."""
     try:
-        device = _get_eq8_device(song, track_index, device_index)
+        device = _get_eq8_device(song, track_index, device_index, track_type)
         result = {
             "device_name": device.name,
             "track_index": track_index,
@@ -780,10 +780,10 @@ def get_eq8_properties(song, track_index, device_index, ctrl=None):
 
 def set_eq8_properties(song, track_index, device_index,
                         edit_mode=None, global_mode=None,
-                        oversample=None, selected_band=None, ctrl=None):
+                        oversample=None, selected_band=None, track_type="track", ctrl=None):
     """Set EQ8-specific properties."""
     try:
-        device = _get_eq8_device(song, track_index, device_index)
+        device = _get_eq8_device(song, track_index, device_index, track_type)
         changes = {}
         if edit_mode is not None:
             edit_mode = int(edit_mode)
@@ -819,9 +819,9 @@ def set_eq8_properties(song, track_index, device_index,
 # --- Hybrid Reverb IR ---
 
 
-def _get_hybrid_reverb_device(song, track_index, device_index):
+def _get_hybrid_reverb_device(song, track_index, device_index, track_type="track"):
     """Resolve a Hybrid Reverb device, raising if not found or wrong type."""
-    track = get_track(song, track_index)
+    track = resolve_track(song, track_index, track_type)
     if device_index < 0 or device_index >= len(track.devices):
         raise IndexError("Device index out of range")
     device = track.devices[device_index]
@@ -831,10 +831,10 @@ def _get_hybrid_reverb_device(song, track_index, device_index):
     return device
 
 
-def get_hybrid_reverb_ir(song, track_index, device_index, ctrl=None):
+def get_hybrid_reverb_ir(song, track_index, device_index, track_type="track", ctrl=None):
     """Get IR configuration from a Hybrid Reverb device."""
     try:
-        device = _get_hybrid_reverb_device(song, track_index, device_index)
+        device = _get_hybrid_reverb_device(song, track_index, device_index, track_type)
         result = {
             "device_name": device.name,
             "track_index": track_index,
@@ -882,10 +882,11 @@ def get_hybrid_reverb_ir(song, track_index, device_index, ctrl=None):
 def set_hybrid_reverb_ir(song, track_index, device_index,
                           ir_category_index=None, ir_file_index=None,
                           ir_attack_time=None, ir_decay_time=None,
-                          ir_size_factor=None, ir_time_shaping_on=None, ctrl=None):
+                          ir_size_factor=None, ir_time_shaping_on=None,
+                          track_type="track", ctrl=None):
     """Set IR configuration on a Hybrid Reverb device."""
     try:
-        device = _get_hybrid_reverb_device(song, track_index, device_index)
+        device = _get_hybrid_reverb_device(song, track_index, device_index, track_type)
         changes = {}
         if ir_category_index is not None:
             device.ir_category_index = int(ir_category_index)
@@ -918,9 +919,9 @@ def set_hybrid_reverb_ir(song, track_index, device_index,
 # --- Transmute Device Controls ---
 
 
-def _get_transmute_device(song, track_index, device_index):
+def _get_transmute_device(song, track_index, device_index, track_type="track"):
     """Resolve a Transmute device, raising if not found or wrong type."""
-    track = get_track(song, track_index)
+    track = resolve_track(song, track_index, track_type)
     if device_index < 0 or device_index >= len(track.devices):
         raise IndexError("Device index out of range")
     device = track.devices[device_index]
@@ -930,10 +931,10 @@ def _get_transmute_device(song, track_index, device_index):
     return device
 
 
-def get_transmute_properties(song, track_index, device_index, ctrl=None):
+def get_transmute_properties(song, track_index, device_index, track_type="track", ctrl=None):
     """Get Transmute-specific properties: mode indices, polyphony, pitch bend range."""
     try:
-        device = _get_transmute_device(song, track_index, device_index)
+        device = _get_transmute_device(song, track_index, device_index, track_type)
         result = {
             "device_name": device.name,
             "track_index": track_index,
@@ -974,10 +975,10 @@ def set_transmute_properties(song, track_index, device_index,
                               frequency_dial_mode_index=None, pitch_mode_index=None,
                               mod_mode_index=None, mono_poly_index=None,
                               midi_gate_index=None, polyphony=None,
-                              pitch_bend_range=None, ctrl=None):
+                              pitch_bend_range=None, track_type="track", ctrl=None):
     """Set Transmute-specific properties."""
     try:
-        device = _get_transmute_device(song, track_index, device_index)
+        device = _get_transmute_device(song, track_index, device_index, track_type)
         changes = {}
         if frequency_dial_mode_index is not None:
             device.frequency_dial_mode_index = int(frequency_dial_mode_index)
@@ -1013,9 +1014,9 @@ def set_transmute_properties(song, track_index, device_index,
 # --- Simpler / Sample Controls ---
 
 
-def _get_simpler_device(song, track_index, device_index):
+def _get_simpler_device(song, track_index, device_index, track_type="track"):
     """Resolve a Simpler device, raising if not found or wrong type."""
-    track = get_track(song, track_index)
+    track = resolve_track(song, track_index, track_type)
     if device_index < 0 or device_index >= len(track.devices):
         raise IndexError("Device index out of range")
     device = track.devices[device_index]
@@ -1025,10 +1026,10 @@ def _get_simpler_device(song, track_index, device_index):
     return device
 
 
-def get_simpler_properties(song, track_index, device_index, ctrl=None):
+def get_simpler_properties(song, track_index, device_index, track_type="track", ctrl=None):
     """Get Simpler device and its sample properties."""
     try:
-        device = _get_simpler_device(song, track_index, device_index)
+        device = _get_simpler_device(song, track_index, device_index, track_type)
         result = {
             "device_name": device.name,
             "track_index": track_index,
@@ -1119,10 +1120,10 @@ def set_simpler_properties(song, track_index, device_index,
                             beats_transient_loop_mode=None,
                             complex_pro_formants=None, complex_pro_envelope=None,
                             texture_grain_size=None, texture_flux=None,
-                            tones_grain_size=None, ctrl=None):
+                            tones_grain_size=None, track_type="track", ctrl=None):
     """Set Simpler device and sample properties."""
     try:
-        device = _get_simpler_device(song, track_index, device_index)
+        device = _get_simpler_device(song, track_index, device_index, track_type)
         changes = {}
         # Device-level
         if playback_mode is not None:
@@ -1220,7 +1221,7 @@ def set_simpler_properties(song, track_index, device_index,
         raise
 
 
-def simpler_sample_action(song, track_index, device_index, action, beats=None, ctrl=None):
+def simpler_sample_action(song, track_index, device_index, action, beats=None, track_type="track", ctrl=None):
     """Perform an action on a Simpler device's sample.
 
     Args:
@@ -1228,7 +1229,7 @@ def simpler_sample_action(song, track_index, device_index, action, beats=None, c
         beats: Required for 'warp_as' — number of beats to warp to.
     """
     try:
-        device = _get_simpler_device(song, track_index, device_index)
+        device = _get_simpler_device(song, track_index, device_index, track_type)
         if action == "reverse":
             device.reverse()
         elif action == "crop":
@@ -1257,7 +1258,7 @@ def simpler_sample_action(song, track_index, device_index, action, beats=None, c
 
 
 def manage_sample_slices(song, track_index, device_index, action,
-                          slice_time=None, new_time=None, ctrl=None):
+                          slice_time=None, new_time=None, track_type="track", ctrl=None):
     """Manage slice points on a Simpler device's sample.
 
     Args:
@@ -1266,7 +1267,7 @@ def manage_sample_slices(song, track_index, device_index, action,
         new_time: Required for move — the new time position.
     """
     try:
-        device = _get_simpler_device(song, track_index, device_index)
+        device = _get_simpler_device(song, track_index, device_index, track_type)
         sample = getattr(device, "sample", None)
         if sample is None:
             raise Exception("No sample loaded in Simpler '{0}'".format(device.name))

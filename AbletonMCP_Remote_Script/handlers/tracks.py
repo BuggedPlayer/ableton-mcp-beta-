@@ -285,26 +285,20 @@ def disarm_track(song, track_index, ctrl=None):
 
 
 def group_tracks(song, track_indices, name, ctrl=None):
-    """Group tracks (selects first track for grouping)."""
-    try:
-        if not track_indices or len(track_indices) == 0:
-            raise ValueError("No tracks specified")
-        for i in track_indices:
-            if i < 0 or i >= len(song.tracks):
-                raise IndexError("Track index {0} out of range".format(i))
-        song.view.selected_track = song.tracks[track_indices[0]]
-        if ctrl:
-            ctrl.log_message(
-                "Grouping requested for '{0}' — not supported by Remote Script API; "
-                "selected track {1}. Use Edit > Group Tracks in Ableton.".format(
-                    name, track_indices[0]))
-        raise NotImplementedError(
-            "Track grouping is not available via the Remote Script API. "
-            "Select the tracks in Ableton and use Edit > Group Tracks (Ctrl+G / Cmd+G).")
-    except Exception as e:
-        if ctrl:
-            ctrl.log_message("Error grouping tracks: " + str(e))
-        raise
+    """Group tracks — not supported by Remote Script API. Selects first track and returns guidance."""
+    if not track_indices or len(track_indices) == 0:
+        raise ValueError("No tracks specified")
+    for i in track_indices:
+        if i < 0 or i >= len(song.tracks):
+            raise IndexError("Track index {0} out of range".format(i))
+    song.view.selected_track = song.tracks[track_indices[0]]
+    msg = ("Track grouping is not available via the Remote Script API. "
+           "Select the tracks in Ableton and use Edit > Group Tracks (Ctrl+G / Cmd+G).")
+    if ctrl:
+        ctrl.log_message(
+            "group_tracks: '{0}' — selected track {1}. {2}".format(
+                name, track_indices[0], msg))
+    raise NotImplementedError(msg)
 
 
 def get_all_tracks_info(song, ctrl=None):

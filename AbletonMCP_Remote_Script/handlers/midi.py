@@ -417,7 +417,12 @@ def capture_midi(song, ctrl=None):
 
 
 def apply_groove(song, track_index, clip_index, groove_amount, ctrl=None):
-    """Apply groove amount (sets global song.groove_amount, validates clip exists)."""
+    """Set global song.groove_amount. Validates clip exists but does NOT apply per-clip groove.
+
+    NOTE: song.groove_amount is a global setting — it affects all clips that
+    have a groove assigned, not just the specified clip.  The track_index and
+    clip_index parameters are used only for input validation.
+    """
     try:
         _get_midi_clip(song, track_index, clip_index)  # validate clip exists
         groove_amount = float(groove_amount)
@@ -425,9 +430,11 @@ def apply_groove(song, track_index, clip_index, groove_amount, ctrl=None):
             raise ValueError("groove_amount must be 0.0-1.0, got {0}".format(groove_amount))
         song.groove_amount = groove_amount
         return {
+            "applied_scope": "song",
             "track_index": track_index,
             "clip_index": clip_index,
             "groove_amount": song.groove_amount,
+            "note": "groove_amount is a global song property — affects all clips with a groove assigned",
         }
     except Exception as e:
         if ctrl:

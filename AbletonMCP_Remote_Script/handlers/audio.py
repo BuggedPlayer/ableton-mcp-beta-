@@ -210,7 +210,8 @@ def freeze_track(song, track_index, ctrl=None):
                 "Track '{0}' cannot be frozen (may be a return/master track or have no devices)".format(track.name))
 
         return {
-            "success": True,
+            "success": False,
+            "requires_manual_action": True,
             "track_index": track_index,
             "frozen": False,
             "track_name": track.name,
@@ -239,7 +240,8 @@ def unfreeze_track(song, track_index, ctrl=None):
             }
 
         return {
-            "success": True,
+            "success": False,
+            "requires_manual_action": True,
             "track_index": track_index,
             "frozen": True,
             "track_name": track.name,

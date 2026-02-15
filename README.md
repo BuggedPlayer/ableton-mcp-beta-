@@ -1,6 +1,6 @@
 # AbletonMCP
 
-**230 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)
+**232 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)
 
 AbletonMCP gives Claude direct control over your Ableton Live session through the Model Context Protocol. Create tracks, write MIDI, design sounds, mix, automate, browse instruments, snapshot presets, and navigate deep into device chains and modulation matrices — all through natural language conversation.
 
@@ -139,7 +139,7 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 
 ---
 
-## Tools by Category (230 + 19 Optional)
+## Tools by Category (232 + 19 Optional)
 
 | Category | Count | Channel |
 |---|---|---|
@@ -191,9 +191,9 @@ Claude AI  <--MCP-->  MCP Server  <--TCP:9877-->  Ableton Remote Script
 | Event Monitoring | 3 | UDP/OSC |
 | Undo-Clean Params | 1 | UDP/OSC |
 | Audio Analysis (cross-track) | 3 | UDP/OSC |
-| **Subtotal** | **230** | |
+| **Subtotal** | **232** | |
 | ElevenLabs Voice/SFX | 19 | HTTPS (optional) |
-| **Total** | **249** | |
+| **Total** | **251** | |
 
 ---
 

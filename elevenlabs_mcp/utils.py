@@ -2,6 +2,7 @@ import os
 import re
 from pathlib import Path
 from datetime import datetime
+from typing import NoReturn
 from fuzzywuzzy import fuzz
 
 
@@ -9,7 +10,7 @@ class ElevenLabsMcpError(Exception):
     pass
 
 
-def make_error(error_text: str):
+def make_error(error_text: str) -> NoReturn:
     raise ElevenLabsMcpError(error_text)
 
 

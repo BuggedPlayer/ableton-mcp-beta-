@@ -406,10 +406,10 @@ def get_browser_items_at_path(song, path, ctrl=None):
         if not hasattr(app, "browser") or app.browser is None:
             raise RuntimeError("Browser is not available in the Live application")
 
+        if not path or not path.strip():
+            raise ValueError("Invalid path: empty or blank")
         browser_attrs = [attr for attr in dir(app.browser) if not attr.startswith("_")]
         path_parts = path.split("/")
-        if not path_parts:
-            raise ValueError("Invalid path")
 
         root_category = path_parts[0].lower()
         current_item = None

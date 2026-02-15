@@ -18,10 +18,22 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 
 #### Remote Script: Audio Handlers
 
-- **fix**: `freeze_track` / `unfreeze_track` — return `action_required: "manual_freeze"/"manual_unfreeze"` dict instead of `success: False`, since these are LOM limitations (not errors).
+- **fix**: `freeze_track` / `unfreeze_track` — return `success: False` + `requires_manual_action: True` when programmatic freeze is unavailable, so callers know the operation did not complete.
 - **fix**: Bare `except: pass` in audio sample enumeration replaced with `except Exception as sample_err:` + `ctrl.log_message()` with clip name.
 - **fix**: `get_audio_clip_info` / `analyze_audio_clip` — file path sanitized to basename only (prevents leaking local filesystem paths).
 - **fix**: `character_map` added missing key `3` ("pitched") for re_pitch warp mode; summary guard skips "unknown" warp character labels.
+
+#### Remote Script: Automation Handlers
+
+- **fix**: `_find_parameter` send-name parsing — restricted to well-formed single-letter send names (`^send\s*[a-z]$`); rejects false matches like "resend" or "send_abc".
+
+#### Remote Script: Browser Handlers
+
+- **fix**: `get_browser_items_at_path` — replaced unreachable `if not path_parts` dead branch (always non-empty after `split("/")`) with early `if not path` guard that actually catches empty input.
+
+#### Remote Script: Mixer Handlers
+
+- **fix**: `set_crossfade_assign` — added implementation to `handlers.mixer` so the dispatch table entry no longer raises `AttributeError`.
 
 #### Remote Script: Clip Handlers
 
@@ -31,10 +43,12 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 #### Remote Script: Device Handlers
 
 - **fix**: `_resolve_display_value_bruteforce` — detects float-range parameters and raises clear `ValueError` instead of infinite-looping.
+- **refactor**: 7 specialized device helpers (`_get_drum_rack`, `_get_rack_device`, `_get_compressor_device`, `_get_eq8_device`, `_get_hybrid_reverb_device`, `_get_transmute_device`, `_get_simpler_device`) now accept `track_type` parameter and use `resolve_track()` — all 17 public callers propagate `track_type`, enabling device operations on return and master tracks.
 
 #### Remote Script: MIDI Handlers
 
 - **fix**: `clear_clip_notes` — uses `clip.length + 1` for counting range (matches removal range).
+- **fix**: `apply_groove` — docstring and response now clearly state `groove_amount` is a global song property; added `applied_scope: "song"` and explanatory `note` to return dict.
 
 #### Remote Script: Session Handlers
 
@@ -42,7 +56,7 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 
 #### Remote Script: Track Handlers
 
-- **fix**: `group_tracks` — raises `NotImplementedError` with guidance instead of returning silent `grouped: False`.
+- **fix**: `group_tracks` — raises `NotImplementedError` with guidance instead of returning silent `grouped: False`. Moved raise outside try/except to eliminate double-logging.
 
 #### ElevenLabs MCP: Security
 
@@ -51,11 +65,14 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `__main__.py` — `get_claude_config_path()` now returns the platform-specific path even if directory doesn't exist (first-time users). Caller creates it via `mkdir(parents=True)`.
 - **fix**: `__main__.py` — corrupt/unreadable config file now logs a warning via `logger.warning()` before falling back to `{}`.
 - **fix**: `__main__.py` — accepts file path argument (resolves to parent directory).
+- **fix**: `__main__.py` — config file I/O now uses `encoding="utf-8"` to prevent corruption on non-ASCII platforms.
 
 #### ElevenLabs MCP: Reliability
 
 - **fix**: `server.py` `voice_clone` — `response = None` initialization + post-finally guard prevents `UnboundLocalError` when API call fails.
-- **fix**: `server.py` `add_knowledge_base_to_agent` — file handle leak fixed: `open()` moved inside `try` block so `finally` always closes it. Path validation (`handle_input_file`) runs first, outside the try.
+- **fix**: `server.py` `add_knowledge_base_to_agent` — file handle leak fixed: `open()` moved inside `try` block so `finally` always closes it. Path validation (`handle_input_file`) runs first, outside the try. Added comment documenting KB orphan limitation (no delete endpoint available).
+- **fix**: `server.py` `make_outbound_call` — phone number PII: log now shows last 4 digits (`***1234`) instead of first 5 digits (country+area code).
+- **refactor**: `server.py` — renamed `output_file_name` → `output_file` across all tools; removed redundant `output_path / output_file` joins since `make_output_file` already returns an absolute Path.
 - **fix**: `convai.py` — `max_tokens` uses `if max_tokens is not None` instead of `if max_tokens` (allows 0).
 - **fix**: `model.py` — `ConvaiAgent` → `ConvAiAgent` for consistent capitalization.
 
@@ -64,14 +81,29 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 - **fix**: `utils.py` `make_output_file` — exception chaining: `raise ... from err` preserves original traceback.
 - **fix**: `utils.py` `make_output_path` — containment check validates absolute `output_directory` against `base_path`.
 - **fix**: `utils.py` `handle_input_file` — validates absolute paths against `base_path`.
+- **fix**: `utils.py` `make_error` — added `-> NoReturn` return type annotation with `typing.NoReturn` import for static analysis correctness.
 
 #### Documentation
 
 - **fix**: README — M4L tool count corrected from `+24` to `+38`.
 - **fix**: README — MD028 blank lines between blockquotes use `>` prefix.
 - **fix**: README — MD040 architecture code fence tagged with `text` language.
+- **fix**: README — tool count table subtotal corrected from 230 to 232 (per-category rows always summed to 232).
+- **fix**: CHANGELOG — Transmute entry reworded from "(Not working already)" to "(Known broken — Ableton API limitation)".
 
-### No tool count change — Total tools: **230** + **19 optional** (ElevenLabs) = **249 total**
+#### MCP Server
+
+- **fix**: `MCP_Server/__init__.py` — `__version__` updated from `"1.8.2"` to `"2.9.1"` to match pyproject.toml.
+- **fix**: `grid_notation.py` — unreachable `line.startswith(' ')` check (post-`strip()`) replaced with pre-strip check on raw line so indented lines are correctly skipped.
+
+#### Package Metadata
+
+- **fix**: `pyproject.toml` — description removed "Beta" to match `ableton-mcp-stable` package name.
+- **fix**: `pyproject.toml` — `[project.urls]` corrected to canonical `ahujasid/ableton-mcp` repository.
+
+### Tool count correction: **232** + **19 optional** (ElevenLabs) = **251 total**
+
+Per-category tool counts always summed to 232; the previous subtotal of 230 was a tabulation error.
 
 ---
 
@@ -474,7 +506,7 @@ Cross-referenced the Live Object Model (Max 9), Python API stubs, and Live 12.4 
 - `select_track` — programmatically select a track (regular, return, or master)
 - `set_detail_clip` — show a specific clip in Live's Detail view (bottom panel)
 
-### New: Transmute Device Controls (2 tools) (Not working already)
+### New: Transmute Device Controls (2 tools) (Known broken — Ableton API limitation)
 - `get_transmute_properties` — read frequency dial mode, pitch mode, mod mode, mono/poly mode, MIDI gate mode (each with available options list), polyphony, and pitch bend range
 - `set_transmute_properties` — set any combination of Transmute mode indices, polyphony, and pitch bend range
 

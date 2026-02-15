@@ -159,6 +159,33 @@ def set_return_track_solo(song, return_track_index, solo, ctrl=None):
         raise
 
 
+# --- Crossfade ---
+
+
+def set_crossfade_assign(song, track_index, assign, ctrl=None):
+    """Set A/B crossfade assignment for a track.
+
+    Args:
+        assign: 0=NONE, 1=A, 2=B
+    """
+    try:
+        track = get_track(song, track_index)
+        assign = int(assign)
+        if assign not in (0, 1, 2):
+            raise ValueError("assign must be 0 (NONE), 1 (A), or 2 (B)")
+        track.mixer_device.crossfade_assign = assign
+        _labels = {0: "NONE", 1: "A", 2: "B"}
+        return {
+            "track_index": track_index,
+            "track_name": track.name,
+            "crossfade_assign": _labels.get(assign, str(assign)),
+        }
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("Error setting crossfade assign: " + str(e))
+        raise
+
+
 # --- Master track ---
 
 

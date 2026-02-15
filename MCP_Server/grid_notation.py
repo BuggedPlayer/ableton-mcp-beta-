@@ -194,9 +194,11 @@ def parse_melodic_grid(grid: str, base_octave: int = 4, steps_per_beat: int = 4)
     notes = []
     lines = grid.strip().split('\n')
 
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith('#') or line.startswith(' '):
+    for raw_line in lines:
+        if raw_line.startswith(' ') or raw_line.startswith('\t'):
+            continue
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
             continue
 
         # Parse label: "C4|..." or "C|..." or "60|..."

@@ -1,7 +1,7 @@
 [project]
 name = "ableton-mcp-stable"
 version = "2.9.1"
-description = "AbletonMCP Beta — Ableton Live integration through the Model Context Protocol"
+description = "AbletonMCP — Ableton Live integration through the Model Context Protocol"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -41,5 +41,5 @@ packages = ["MCP_Server", "elevenlabs_mcp"]
 MCP_Server = ["browser_cache_seed.json"]
 
 [project.urls]
-"Homepage" = "https://github.com/BuggedPlayer/ableton-mcp-beta"
-"Bug Tracker" = "https://github.com/BuggedPlayer/ableton-mcp-beta/issues"
+"Homepage" = "https://github.com/ahujasid/ableton-mcp"
+"Bug Tracker" = "https://github.com/ahujasid/ableton-mcp/issues"

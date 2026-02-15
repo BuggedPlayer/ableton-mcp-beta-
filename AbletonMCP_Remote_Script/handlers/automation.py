@@ -2,9 +2,12 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+import re
 import traceback
 
 from ._helpers import get_track, get_clip
+
+_RE_SEND_NAME = re.compile(r'^send\s*([a-z])$')
 
 
 def _find_parameter(song, track_index, parameter_name):
@@ -18,13 +21,12 @@ def _find_parameter(song, track_index, parameter_name):
     elif lower in ("pan", "panning"):
         return track.mixer_device.panning
 
-    # Check send parameters
-    if lower.startswith("send"):
-        send_char = lower.replace("send", "").strip()
-        if send_char:
-            send_index = ord(send_char[0].upper()) - ord("A")
-            if 0 <= send_index < len(track.mixer_device.sends):
-                return track.mixer_device.sends[send_index]
+    # Check send parameters — accept "send a", "send_a", "senda", etc.
+    m = _RE_SEND_NAME.match(lower.replace("_", ""))
+    if m:
+        send_index = ord(m.group(1).upper()) - ord("A")
+        if 0 <= send_index < len(track.mixer_device.sends):
+            return track.mixer_device.sends[send_index]
 
     # Check device parameters
     for device in track.devices:

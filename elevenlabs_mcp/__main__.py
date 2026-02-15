@@ -118,7 +118,7 @@ if __name__ == "__main__":
         # Merge into existing config instead of clobbering
         if config_file.exists():
             try:
-                with open(config_file, "r") as f:
+                with open(config_file, "r", encoding="utf-8") as f:
                     existing = json.load(f)
             except (json.JSONDecodeError, OSError) as exc:
                 logger.warning("Could not read %s (%s), starting fresh", config_file, exc)
@@ -133,5 +133,5 @@ if __name__ == "__main__":
             existing["mcpServers"][server_name] = server_cfg
 
         print("Writing config to", config_file)
-        with open(config_file, "w") as f:
+        with open(config_file, "w", encoding="utf-8") as f:
             json.dump(existing, f, indent=2)

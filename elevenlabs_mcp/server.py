@@ -117,7 +117,7 @@ def text_to_speech(
 
     chosen_voice_id = voice.voice_id if voice else DEFAULT_VOICE_ID
     output_path = make_output_path(output_directory, base_path)
-    output_file_name = make_output_file("tts", text, output_path, "mp3")
+    output_file = make_output_file("tts", text, output_path, "mp3")
 
     audio_data = _get_client().text_to_speech.convert(
         text=text,
@@ -132,14 +132,14 @@ def text_to_speech(
             "speed": speed,
         },
     )
-    with open(output_path / output_file_name, "wb") as f:
+    with open(output_file, "wb") as f:
         for chunk in audio_data:
             f.write(chunk)
 
-    logger.info("text_to_speech: voice=%s output=%s", chosen_voice_id, output_file_name)
+    logger.info("text_to_speech: voice=%s output=%s", chosen_voice_id, output_file)
     return TextContent(
         type="text",
-        text=f"Success. File saved as: {output_path / output_file_name}. Voice used: {voice.name if voice else DEFAULT_VOICE_ID}",
+        text=f"Success. File saved as: {output_file}. Voice used: {voice.name if voice else DEFAULT_VOICE_ID}",
     )
 
 
@@ -174,7 +174,7 @@ def speech_to_text(
     file_path = handle_input_file(input_file_path)
     if save_transcript_to_file:
         output_path = make_output_path(output_directory, base_path)
-        output_file_name = make_output_file("stt", file_path.name, output_path, "txt")
+        output_file = make_output_file("stt", file_path.name, output_path, "txt")
     with file_path.open("rb") as f:
         audio_bytes = f.read()
     transcription = _get_client().speech_to_text.convert(
@@ -187,14 +187,14 @@ def speech_to_text(
     )
 
     if save_transcript_to_file:
-        with open(output_path / output_file_name, "w") as f:
+        with open(output_file, "w") as f:
             f.write(transcription.text)
 
     if return_transcript_to_client_directly:
         return TextContent(type="text", text=transcription.text)
     else:
         return TextContent(
-            type="text", text=f"Transcription saved to {output_path / output_file_name}"
+            type="text", text=f"Transcription saved to {output_file}"
         )
 
 
@@ -219,21 +219,21 @@ def text_to_sound_effects(
     if duration_seconds < 0.5 or duration_seconds > 5:
         make_error("Duration must be between 0.5 and 5 seconds")
     output_path = make_output_path(output_directory, base_path)
-    output_file_name = make_output_file("sfx", text, output_path, "mp3")
+    output_file = make_output_file("sfx", text, output_path, "mp3")
 
     audio_data = _get_client().text_to_sound_effects.convert(
         text=text,
         output_format="mp3_44100_128",
         duration_seconds=duration_seconds,
     )
-    with open(output_path / output_file_name, "wb") as f:
+    with open(output_file, "wb") as f:
         for chunk in audio_data:
             f.write(chunk)
 
-    logger.info("text_to_sound_effects: output=%s", output_file_name)
+    logger.info("text_to_sound_effects: output=%s", output_file)
     return TextContent(
         type="text",
-        text=f"Success. File saved as: {output_path / output_file_name}",
+        text=f"Success. File saved as: {output_file}",
     )
 
 
@@ -322,20 +322,20 @@ def isolate_audio(
 ) -> TextContent:
     file_path = handle_input_file(input_file_path)
     output_path = make_output_path(output_directory, base_path)
-    output_file_name = make_output_file("iso", file_path.name, output_path, "mp3")
+    output_file = make_output_file("iso", file_path.name, output_path, "mp3")
     with file_path.open("rb") as f:
         audio_bytes = f.read()
     audio_data = _get_client().audio_isolation.convert(
         audio=audio_bytes,
     )
-    with open(output_path / output_file_name, "wb") as f:
+    with open(output_file, "wb") as f:
         for chunk in audio_data:
             f.write(chunk)
 
-    logger.info("isolate_audio: output=%s", output_file_name)
+    logger.info("isolate_audio: output=%s", output_file)
     return TextContent(
         type="text",
-        text=f"Success. File saved as: {output_path / output_file_name}",
+        text=f"Success. File saved as: {output_file}",
     )
 
 
@@ -467,6 +467,12 @@ def add_knowledge_base_to_agent(
     try:
         if validated_path is not None:
             file = open(validated_path, "rb")
+        # NOTE: add_to_knowledge_base creates the KB on the server.  If the
+        # subsequent agent-attach logic fails, the KB is orphaned.  The
+        # ElevenLabs API does not currently expose a delete-knowledge-base
+        # endpoint, so we cannot perform a compensating rollback.  If a delete
+        # method becomes available, wrap the attach block in try/except and
+        # call it on failure.
         response = _get_client().conversational_ai.add_to_knowledge_base(
             name=knowledge_base_name,
             url=url,
@@ -575,7 +581,7 @@ def speech_to_speech(
 
     file_path = handle_input_file(input_file_path)
     output_path = make_output_path(output_directory, base_path)
-    output_file_name = make_output_file("sts", file_path.name, output_path, "mp3")
+    output_file = make_output_file("sts", file_path.name, output_path, "mp3")
 
     with file_path.open("rb") as f:
         audio_bytes = f.read()
@@ -586,13 +592,13 @@ def speech_to_speech(
         audio=audio_bytes,
     )
 
-    with open(output_path / output_file_name, "wb") as f:
+    with open(output_file, "wb") as f:
         for chunk in audio_data:
             f.write(chunk)
 
-    logger.info("speech_to_speech: output=%s", output_file_name)
+    logger.info("speech_to_speech: output=%s", output_file)
     return TextContent(
-        type="text", text=f"Success. File saved as: {output_path / output_file_name}"
+        type="text", text=f"Success. File saved as: {output_file}"
     )
 
 
@@ -626,14 +632,14 @@ def text_to_voice(
     output_file_paths = []
 
     for preview in previews.previews:
-        output_file_name = make_output_file(
+        output_file = make_output_file(
             "voice_design", preview.generated_voice_id, output_path, "mp3", full_id=True
         )
-        output_file_paths.append(str(output_file_name))
+        output_file_paths.append(str(output_file))
         generated_voice_ids.append(preview.generated_voice_id)
         audio_bytes = base64.b64decode(preview.audio_base_64)
 
-        with open(output_path / output_file_name, "wb") as f:
+        with open(output_file, "wb") as f:
             f.write(audio_bytes)
 
     return TextContent(
@@ -693,7 +699,7 @@ def make_outbound_call(
         to_number=to_number,
     )
 
-    logger.info("make_outbound_call: agent=%s to=%s***", agent_id, to_number[:5])
+    logger.info("make_outbound_call: agent=%s to=***%s", agent_id, to_number[-4:])
     return TextContent(type="text", text=f"Outbound call initiated: {response}.")
 
 
