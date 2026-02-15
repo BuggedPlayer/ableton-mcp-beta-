@@ -471,7 +471,7 @@ def set_clip_legato(song, track_index, clip_index, legato, ctrl=None):
     """
     try:
         _, clip = get_clip(song, track_index, clip_index)
-        clip.legato = bool(legato)
+        clip.legato = bool(int(legato))
         return {
             "legato": clip.legato,
             "clip_name": clip.name,

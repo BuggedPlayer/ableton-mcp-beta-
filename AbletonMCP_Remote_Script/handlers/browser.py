@@ -137,13 +137,22 @@ def get_browser_item(song, uri, path, ctrl=None):
                     return result
 
             result["found"] = True
-            result["item"] = {
-                "name": getattr(current_item, "name", "Unknown"),
-                "is_folder": getattr(current_item, "is_folder", False),
-                "is_device": getattr(current_item, "is_device", False),
-                "is_loadable": getattr(current_item, "is_loadable", False),
-                "uri": getattr(current_item, "uri", None),
-            }
+            if isinstance(current_item, (list, tuple)):
+                result["item"] = {
+                    "name": root,
+                    "is_folder": True,
+                    "is_device": False,
+                    "is_loadable": False,
+                    "uri": None,
+                }
+            else:
+                result["item"] = {
+                    "name": getattr(current_item, "name", "Unknown"),
+                    "is_folder": getattr(current_item, "is_folder", False),
+                    "is_device": getattr(current_item, "is_device", False),
+                    "is_loadable": getattr(current_item, "is_loadable", False),
+                    "uri": getattr(current_item, "uri", None),
+                }
 
         return result
     except Exception as e:
