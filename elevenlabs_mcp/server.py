@@ -269,11 +269,13 @@ def search_voices(
 def get_voice(voice_id: str) -> McpVoice:
     """Get details of a specific voice."""
     response = _get_client().voices.get(voice_id=voice_id)
+    fine_tuning = getattr(response, "fine_tuning", None)
+    ft_state = getattr(fine_tuning, "state", None) if fine_tuning else None
     return McpVoice(
         id=response.voice_id,
         name=response.name,
         category=response.category,
-        fine_tuning_status=response.fine_tuning.state,
+        fine_tuning_status=ft_state,
     )
 
 
