@@ -535,42 +535,46 @@ def set_track_routing(song, track_index, input_type=None, input_channel=None,
     """
     try:
         track = get_track(song, track_index)
-        # Phase 1: resolve all requested routing targets into locals
-        # before applying any changes (prevents partial mutation on error)
-        resolved = {}
+        changes = {}
+
+        # Phase 1: resolve and apply routing *types* first, since
+        # available channels depend on the currently active type.
         if input_type is not None:
             for rt in track.available_input_routing_types:
                 if str(rt.display_name) == input_type:
-                    resolved["input_routing_type"] = (rt, input_type)
+                    track.input_routing_type = rt
+                    changes["input_routing_type"] = input_type
                     break
             else:
                 raise ValueError("Input type '{0}' not found".format(input_type))
-        if input_channel is not None:
-            for ch in track.available_input_routing_channels:
-                if str(ch.display_name) == input_channel:
-                    resolved["input_routing_channel"] = (ch, input_channel)
-                    break
-            else:
-                raise ValueError("Input channel '{0}' not found".format(input_channel))
         if output_type is not None:
             for rt in track.available_output_routing_types:
                 if str(rt.display_name) == output_type:
-                    resolved["output_routing_type"] = (rt, output_type)
+                    track.output_routing_type = rt
+                    changes["output_routing_type"] = output_type
                     break
             else:
                 raise ValueError("Output type '{0}' not found".format(output_type))
+
+        # Phase 2: resolve and apply channels against the (now-refreshed)
+        # available channel lists.
+        if input_channel is not None:
+            for ch in track.available_input_routing_channels:
+                if str(ch.display_name) == input_channel:
+                    track.input_routing_channel = ch
+                    changes["input_routing_channel"] = input_channel
+                    break
+            else:
+                raise ValueError("Input channel '{0}' not found".format(input_channel))
         if output_channel is not None:
             for ch in track.available_output_routing_channels:
                 if str(ch.display_name) == output_channel:
-                    resolved["output_routing_channel"] = (ch, output_channel)
+                    track.output_routing_channel = ch
+                    changes["output_routing_channel"] = output_channel
                     break
             else:
                 raise ValueError("Output channel '{0}' not found".format(output_channel))
-        # Phase 2: all lookups succeeded — apply atomically
-        changes = {}
-        for attr, (obj, display) in resolved.items():
-            setattr(track, attr, obj)
-            changes[attr] = display
+
         changes["track_index"] = track_index
         changes["track_name"] = track.name
         return changes

@@ -17,6 +17,26 @@ _MAX_CHILDREN = 200  # cap per-folder iteration to avoid hanging on huge directo
 _MAX_SEARCH_RESULTS = 50  # stop traversal once we have enough matches
 
 
+def _iter_children(item, max_items=_MAX_CHILDREN):
+    """Yield children of a BrowserItem or elements of a list-valued root.
+
+    Handles both real BrowserItem objects (with .children) and plain lists
+    (e.g. user_folders).  Caps iteration at *max_items*.
+    """
+    if isinstance(item, (list, tuple)):
+        for i, child in enumerate(item):
+            if i >= max_items:
+                break
+            yield child
+    elif hasattr(item, "children"):
+        count = 0
+        for child in item.children:
+            if count >= max_items:
+                break
+            count += 1
+            yield child
+
+
 def find_browser_item_by_uri(browser_or_item, uri, max_depth=10, current_depth=0, ctrl=None):
     """Find a browser item by its URI (recursive search across all categories)."""
     try:
@@ -107,12 +127,8 @@ def get_browser_item(song, uri, path, ctrl=None):
                 if not part:
                     continue
                 found = False
-                count = 0
-                for child in current_item.children:
-                    if count >= _MAX_CHILDREN:
-                        break
-                    count += 1
-                    if child.name.lower() == part.lower():
+                for child in _iter_children(current_item):
+                    if hasattr(child, "name") and child.name.lower() == part.lower():
                         current_item = child
                         found = True
                         break
@@ -122,11 +138,11 @@ def get_browser_item(song, uri, path, ctrl=None):
 
             result["found"] = True
             result["item"] = {
-                "name": current_item.name,
-                "is_folder": current_item.is_folder if hasattr(current_item, 'is_folder') else False,
-                "is_device": current_item.is_device if hasattr(current_item, 'is_device') else False,
-                "is_loadable": current_item.is_loadable if hasattr(current_item, 'is_loadable') else False,
-                "uri": current_item.uri if hasattr(current_item, 'uri') else None,
+                "name": getattr(current_item, "name", "Unknown"),
+                "is_folder": getattr(current_item, "is_folder", False),
+                "is_device": getattr(current_item, "is_device", False),
+                "is_loadable": getattr(current_item, "is_loadable", False),
+                "uri": getattr(current_item, "uri", None),
             }
 
         return result
@@ -422,18 +438,14 @@ def get_browser_items_at_path(song, path, ctrl=None):
             part = path_parts[i]
             if not part:
                 continue
-            if not hasattr(current_item, "children"):
+            if not isinstance(current_item, (list, tuple)) and not hasattr(current_item, "children"):
                 return {
                     "path": path,
                     "error": "Item at '{0}' has no children".format("/".join(path_parts[:i])),
                     "items": [],
                 }
             found = False
-            count = 0
-            for child in current_item.children:
-                if count >= _MAX_CHILDREN:
-                    break
-                count += 1
+            for child in _iter_children(current_item):
                 if hasattr(child, "name") and child.name.lower() == part.lower():
                     current_item = child
                     found = True
@@ -447,27 +459,27 @@ def get_browser_items_at_path(song, path, ctrl=None):
 
         # Get items at current path
         items = []
-        if hasattr(current_item, "children"):
-            for child in current_item.children:
-                if len(items) >= _MAX_CHILDREN:
-                    break
-                item_info = {
-                    "name": child.name if hasattr(child, "name") else "Unknown",
-                    "is_folder": (hasattr(child, "is_folder") and child.is_folder) or (hasattr(child, "children") and bool(child.children)),
-                    "is_device": hasattr(child, "is_device") and child.is_device,
-                    "is_loadable": hasattr(child, "is_loadable") and child.is_loadable,
-                    "uri": child.uri if hasattr(child, "uri") else None,
-                }
-                items.append(item_info)
+        for child in _iter_children(current_item):
+            if len(items) >= _MAX_CHILDREN:
+                break
+            item_info = {
+                "name": getattr(child, "name", "Unknown"),
+                "is_folder": getattr(child, "is_folder", False) or (hasattr(child, "children") and bool(child.children)),
+                "is_device": getattr(child, "is_device", False),
+                "is_loadable": getattr(child, "is_loadable", False),
+                "uri": getattr(child, "uri", None),
+            }
+            items.append(item_info)
 
+        is_list_root = isinstance(current_item, (list, tuple))
         result = {
             "path": path,
-            "name": current_item.name if hasattr(current_item, "name") else "Unknown",
-            "uri": current_item.uri if hasattr(current_item, "uri") else None,
-            "is_folder": (hasattr(current_item, "is_folder") and current_item.is_folder) or (hasattr(current_item, "children") and bool(current_item.children)),
+            "name": getattr(current_item, "name", "Unknown") if not is_list_root else path_parts[0],
+            "uri": getattr(current_item, "uri", None) if not is_list_root else None,
+            "is_folder": is_list_root or getattr(current_item, "is_folder", False) or (hasattr(current_item, "children") and bool(current_item.children)),
             "truncated": len(items) >= _MAX_CHILDREN,
-            "is_device": hasattr(current_item, "is_device") and current_item.is_device,
-            "is_loadable": hasattr(current_item, "is_loadable") and current_item.is_loadable,
+            "is_device": False if is_list_root else getattr(current_item, "is_device", False),
+            "is_loadable": False if is_list_root else getattr(current_item, "is_loadable", False),
             "items": items,
         }
 

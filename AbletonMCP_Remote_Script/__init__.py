@@ -678,8 +678,10 @@ class AbletonMCP(ControlSurface):
                 client.close()
             except (OSError, socket.error):
                 pass
-            if client in self.client_sockets:
+            try:
                 self.client_sockets.remove(client)
+            except ValueError:
+                pass
             self.log_message("Client handler stopped")
 
     # ------------------------------------------------------------------

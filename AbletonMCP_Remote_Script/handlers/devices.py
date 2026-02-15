@@ -1055,7 +1055,9 @@ def get_simpler_properties(song, track_index, device_index, ctrl=None):
             except Exception:
                 sample_data[prop] = None
         try:
-            sample_data["file_path"] = str(sample.file_path)
+            raw_path = str(sample.file_path)
+            # Only expose filename, not full path (avoids leaking local paths)
+            sample_data["file_path"] = raw_path.replace("\\", "/").rsplit("/", 1)[-1] if raw_path else None
         except Exception:
             sample_data["file_path"] = None
         try:

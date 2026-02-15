@@ -330,6 +330,7 @@ def clear_track_automation(song, track_index, parameter_name, start_time, end_ti
 
         # Find the arrangement clip that covers start_time
         target_clip = None
+        clip_end = None
         for ac in arr_clips:
             clip_start = ac.start_time if hasattr(ac, "start_time") else 0.0
             clip_end = ac.end_time if hasattr(ac, "end_time") else (clip_start + ac.length)
@@ -343,6 +344,10 @@ def clear_track_automation(song, track_index, parameter_name, start_time, end_ti
             raise ValueError(
                 "No arrangement clip covers time {0}. Clip ranges: [{1}]".format(
                     start_time, ", ".join(ranges)))
+
+        # Clamp end_time to clip boundary
+        if end_time > clip_end:
+            end_time = clip_end
 
         envelope = None
         if hasattr(target_clip, "automation_envelope"):
@@ -368,6 +373,8 @@ def clear_track_automation(song, track_index, parameter_name, start_time, end_ti
 def delete_time(song, start_time, end_time, ctrl=None):
     """Delete a section of time from the arrangement."""
     try:
+        start_time = float(start_time)
+        end_time = float(end_time)
         if start_time >= end_time:
             raise ValueError("Start time must be less than end time")
         song.delete_time(start_time, end_time - start_time)
@@ -376,6 +383,10 @@ def delete_time(song, start_time, end_time, ctrl=None):
             "deleted_to": end_time,
             "deleted_length": end_time - start_time,
         }
+    except (TypeError, ValueError) as e:
+        if ctrl:
+            ctrl.log_message("Error deleting time: " + str(e))
+        raise
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error deleting time: " + str(e))
@@ -385,6 +396,8 @@ def delete_time(song, start_time, end_time, ctrl=None):
 def duplicate_time(song, start_time, end_time, ctrl=None):
     """Duplicate a section of time in the arrangement."""
     try:
+        start_time = float(start_time)
+        end_time = float(end_time)
         if start_time >= end_time:
             raise ValueError("Start time must be less than end time")
         song.duplicate_time(start_time, end_time - start_time)
@@ -394,6 +407,10 @@ def duplicate_time(song, start_time, end_time, ctrl=None):
             "duplicated_length": end_time - start_time,
             "pasted_at": end_time,
         }
+    except (TypeError, ValueError) as e:
+        if ctrl:
+            ctrl.log_message("Error duplicating time: " + str(e))
+        raise
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error duplicating time: " + str(e))
@@ -403,10 +420,16 @@ def duplicate_time(song, start_time, end_time, ctrl=None):
 def insert_silence(song, position, length, ctrl=None):
     """Insert silence at a position in the arrangement."""
     try:
+        position = float(position)
+        length = float(length)
         if length <= 0:
             raise ValueError("Length must be greater than 0")
         song.insert_time(position, length)
         return {"inserted_at": position, "inserted_length": length}
+    except (TypeError, ValueError) as e:
+        if ctrl:
+            ctrl.log_message("Error inserting silence: " + str(e))
+        raise
     except Exception as e:
         if ctrl:
             ctrl.log_message("Error inserting silence: " + str(e))

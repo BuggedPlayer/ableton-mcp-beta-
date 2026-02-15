@@ -237,7 +237,7 @@ def set_clip_looping(song, track_index, clip_index, looping, ctrl=None):
     """Set the looping state of a clip."""
     try:
         _, clip = get_clip(song, track_index, clip_index)
-        clip.looping = looping
+        clip.looping = bool(int(looping))
         return {
             "track_index": track_index,
             "clip_index": clip_index,
@@ -284,6 +284,9 @@ def set_clip_color(song, track_index, clip_index, color_index, ctrl=None):
     """Set the color of a clip."""
     try:
         _, clip = get_clip(song, track_index, clip_index)
+        color_index = int(color_index)
+        if color_index < 0 or color_index > 69:
+            raise ValueError("color_index must be between 0 and 69, got {0}".format(color_index))
         clip.color_index = color_index
         return {
             "track_index": track_index,
