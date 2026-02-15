@@ -45,8 +45,8 @@ logger = logging.getLogger("ElevenLabs-MCP")
 if load_dotenv is not None:
     try:
         load_dotenv()
-    except Exception:
-        pass  # .env file may not exist or may have encoding issues — API key comes from env block in Claude Desktop config
+    except Exception as e:
+        logger.debug("load_dotenv failed: %s", e)
 base_path = os.getenv("ELEVENLABS_MCP_BASE_PATH")
 DEFAULT_VOICE_ID = "dPEieVXDPKaDPRG5YA6R"
 
@@ -182,7 +182,7 @@ def speech_to_text(
         model_id="scribe_v1",
         file=audio_bytes,
         language_code=language_code,
-        enable_logging=True,
+        enable_logging=False,
         diarize=diarize,
         tag_audio_events=True,
     )
