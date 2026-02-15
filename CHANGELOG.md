@@ -70,7 +70,8 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 #### ElevenLabs MCP: Reliability
 
 - **fix**: `server.py` `voice_clone` — `response = None` initialization + post-finally guard prevents `UnboundLocalError` when API call fails.
-- **fix**: `server.py` `add_knowledge_base_to_agent` — file handle leak fixed: `open()` moved inside `try` block so `finally` always closes it. Path validation (`handle_input_file`) runs first, outside the try. Added comment documenting KB orphan limitation (no delete endpoint available).
+- **fix**: `server.py` `add_knowledge_base_to_agent` — file handle leak fixed: `open()` moved inside `try` block so `finally` always closes it. Path validation (`handle_input_file`) runs first, outside the try.
+- **fix**: `server.py` `add_knowledge_base_to_agent` — KB creation is now atomic: the agent-attach logic (agents.get → config traversal → kb append → agents.update) is wrapped in a try/except; on any failure, the newly-created KB document is deleted via `conversational_ai.knowledge_base.delete()` to prevent orphaned documents accumulating on the server. If the compensating delete itself fails, a warning is logged with the orphaned KB ID.
 - **fix**: `server.py` `make_outbound_call` — phone number PII: log now shows last 4 digits (`***1234`) instead of first 5 digits (country+area code).
 - **refactor**: `server.py` — renamed `output_file_name` → `output_file` across all tools; removed redundant `output_path / output_file` joins since `make_output_file` already returns an absolute Path.
 - **fix**: `convai.py` — `max_tokens` uses `if max_tokens is not None` instead of `if max_tokens` (allows 0).
@@ -100,6 +101,8 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 
 - **fix**: `pyproject.toml` — description removed "Beta" to match `ableton-mcp-stable` package name.
 - **fix**: `pyproject.toml` — `[project.urls]` corrected to canonical `ahujasid/ableton-mcp` repository.
+- **fix**: `pyproject.toml` — elevenlabs optional-dependencies: pinned `httpx>=0.24.0` (minimum version supporting explicit `Timeout`); replaced `fuzzywuzzy` with `rapidfuzz` (C++ backend, no `python-Levenshtein` warning).
+- **fix**: `utils.py` — updated `from fuzzywuzzy import fuzz` → `from rapidfuzz import fuzz` (drop-in compatible `token_sort_ratio`).
 
 ### Tool count correction: **232** + **19 optional** (ElevenLabs) = **251 total**
 

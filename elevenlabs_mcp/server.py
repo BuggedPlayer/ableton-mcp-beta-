@@ -467,38 +467,57 @@ def add_knowledge_base_to_agent(
     try:
         if validated_path is not None:
             file = open(validated_path, "rb")
-        # NOTE: add_to_knowledge_base creates the KB on the server.  If the
-        # subsequent agent-attach logic fails, the KB is orphaned.  The
-        # ElevenLabs API does not currently expose a delete-knowledge-base
-        # endpoint, so we cannot perform a compensating rollback.  If a delete
-        # method becomes available, wrap the attach block in try/except and
-        # call it on failure.
+
         response = _get_client().conversational_ai.add_to_knowledge_base(
             name=knowledge_base_name,
             url=url,
             file=file,
         )
-        agent = _get_client().conversational_ai.agents.get(agent_id)
-        conv_cfg = getattr(agent, "conversation_config", None)
-        agent_cfg = getattr(conv_cfg, "agent", None) if conv_cfg else None
-        prompt_cfg = getattr(agent_cfg, "prompt", None) if agent_cfg else None
-        if prompt_cfg is None:
-            make_error(
-                "Agent {0} has no prompt configuration — cannot attach knowledge base".format(agent_id))
-        kb_list = getattr(prompt_cfg, "knowledge_base", None)
-        if not isinstance(kb_list, list):
-            kb_list = []
-            prompt_cfg.knowledge_base = kb_list
-        kb_list.append(
-            KnowledgeBaseLocator(
-                type="file" if file else "url",
-                name=knowledge_base_name,
-                id=response.id,
+
+        # --- Attach the newly-created KB to the agent (atomic block) --------
+        # If anything below fails the KB document already exists on the server.
+        # We perform a compensating delete so the user is not left with an
+        # orphaned, unattached knowledge-base document.
+        try:
+            agent = _get_client().conversational_ai.agents.get(agent_id)
+            conv_cfg = getattr(agent, "conversation_config", None)
+            agent_cfg = getattr(conv_cfg, "agent", None) if conv_cfg else None
+            prompt_cfg = getattr(agent_cfg, "prompt", None) if agent_cfg else None
+            if prompt_cfg is None:
+                make_error(
+                    "Agent {0} has no prompt configuration — cannot attach knowledge base".format(agent_id))
+            kb_list = getattr(prompt_cfg, "knowledge_base", None)
+            if not isinstance(kb_list, list):
+                kb_list = []
+                prompt_cfg.knowledge_base = kb_list
+            kb_list.append(
+                KnowledgeBaseLocator(
+                    type="file" if file else "url",
+                    name=knowledge_base_name,
+                    id=response.id,
+                )
             )
-        )
-        _get_client().conversational_ai.agents.update(
-            agent_id, conversation_config=agent.conversation_config
-        )
+            _get_client().conversational_ai.agents.update(
+                agent_id, conversation_config=agent.conversation_config
+            )
+        except Exception:
+            # Compensating rollback: delete the orphaned KB document so it
+            # does not accumulate on the server.
+            try:
+                _get_client().conversational_ai.knowledge_base.delete(
+                    documentation_id=response.id,
+                )
+                logger.info(
+                    "Rolled back orphaned KB %s after agent-attach failure",
+                    response.id,
+                )
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to delete orphaned KB %s during rollback: %s",
+                    response.id, cleanup_err,
+                )
+            raise
+
         return TextContent(
             type="text",
             text=f"""Knowledge base created with ID: {response.id} and added to agent {agent_id} successfully.""",

@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from typing import NoReturn
-from fuzzywuzzy import fuzz
+from rapidfuzz import fuzz
 
 
 class ElevenLabsMcpError(Exception):

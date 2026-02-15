@@ -21,9 +21,9 @@ dependencies = [
 elevenlabs = [
     "elevenlabs>=0.2.26",
     "python-dotenv>=1.0.0",
-    "httpx",
+    "httpx>=0.24.0",
     "pydantic>=2.0",
-    "fuzzywuzzy",
+    "rapidfuzz",
 ]
 
 [project.scripts]
