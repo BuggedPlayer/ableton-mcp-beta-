@@ -106,7 +106,7 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 
 ### Tool count correction: **232** + **19 optional** (ElevenLabs) = **251 total**
 
-Per-category tool counts always summed to 232; the previous subtotal of 230 was a tabulation error.
+Per-category tool counts always summed to 232; the subtotal of 230 reported in v2.8.0–v2.9.0 was a tabulation error (corrected in those entries above).
 
 ---
 
@@ -145,7 +145,7 @@ Internal refactoring across all 4 layers — no new tools, no API changes, no be
 - **fix**: Path containment uses `relative_to()` instead of fragile string prefix check
 - **perf**: Audio data streamed to disk chunk-by-chunk (was `b"".join()` full buffer in memory)
 
-### No tool count change — Total tools: **230** + **19 optional** (ElevenLabs) = **249 total**
+### No tool count change — Total tools: **232** + **19 optional** (ElevenLabs) = **251 total**
 
 ---
 
@@ -204,7 +204,7 @@ Internal refactoring across all 4 layers — no new tools, no API changes, no be
 - **fix**: `add_notes_extended` — removed unused `e1`/`e2` exception variables (lint cleanup)
 - **fix**: `get_notes_extended` / `remove_notes_extended` — switched from keyword to positional arguments (`from_pitch, pitch_span, from_time, time_span`) to avoid parameter-name mismatches across Live versions; silent `except` now logs via ctrl instead of swallowing errors
 
-### No tool count change — Total tools: **230** + **19 optional** (ElevenLabs) = **249 total**
+### No tool count change — Total tools: **232** + **19 optional** (ElevenLabs) = **251 total**
 
 ---
 
@@ -231,7 +231,7 @@ Internal refactoring across all 4 layers — no new tools, no API changes, no be
 - `get_split_stereo` — read left/right split stereo pan values
 - `set_split_stereo` — set independent L/R panning for a track
 
-### Total tools: 221 → **230** (+9) + **19 optional** (ElevenLabs) = **249 total**
+### Total tools: 223 → **232** (+9) + **19 optional** (ElevenLabs) = **251 total**
 
 ---
 
