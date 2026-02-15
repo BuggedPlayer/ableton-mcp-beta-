@@ -57,13 +57,13 @@ def make_output_path(
             output_path.relative_to(resolved_base)
         except ValueError:
             make_error(
-                "Output directory ({0}) escapes base path ({1})".format(
-                    output_directory, resolved_base))
+                "Output directory ({0}) escapes base path".format(
+                    output_directory))
     else:
         output_path = Path(os.path.expanduser(output_directory)).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
     if not is_file_writeable(output_path):
-        make_error("Directory ({0}) is not writeable".format(output_path))
+        make_error("Directory ({0}) is not writeable".format(output_directory or "~/Desktop"))
     return output_path
 
 
@@ -146,24 +146,23 @@ def handle_input_file(file_path: str, audio_content_check: bool = True) -> Path:
             path.relative_to(resolved_base)
         except ValueError:
             make_error(
-                "File path ({0}) escapes base path ({1})".format(
-                    file_path, resolved_base))
+                "File path ({0}) escapes base path".format(file_path))
     else:
         path = Path(file_path).resolve()
     if not path.exists() and path.parent.exists():
         parent_directory = path.parent
         similar_files = try_find_similar_files(path.name, parent_directory)
-        similar_files_formatted = ",".join([str(file) for file in similar_files])
+        similar_files_formatted = ",".join([f.name for f in similar_files])
         if similar_files:
             make_error(
-                f"File ({path}) does not exist. Did you mean any of these files: {similar_files_formatted}?"
+                f"File ({path.name}) does not exist. Did you mean any of these files: {similar_files_formatted}?"
             )
-        make_error(f"File ({path}) does not exist")
+        make_error(f"File ({path.name}) does not exist")
     elif not path.exists():
-        make_error(f"File ({path}) does not exist")
+        make_error(f"File ({path.name}) does not exist")
     elif not path.is_file():
-        make_error(f"File ({path}) is not a file")
+        make_error(f"File ({path.name}) is not a file")
 
     if audio_content_check and not check_audio_file(path):
-        make_error(f"File ({path}) is not an audio or video file")
+        make_error(f"File ({path.name}) is not an audio or video file")
     return path

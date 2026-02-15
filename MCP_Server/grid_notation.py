@@ -537,4 +537,4 @@ def parse_grid(grid: str, is_drums: bool = None, steps_per_beat: int = 4) -> lis
     if is_drums:
         return parse_drum_grid(grid, steps_per_beat)
     else:
-        return parse_melodic_grid(grid, steps_per_beat)
+        return parse_melodic_grid(grid, steps_per_beat=steps_per_beat)

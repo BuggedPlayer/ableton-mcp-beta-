@@ -14,6 +14,7 @@ Tools without cost warnings in their description are free to use as they only re
 import httpx
 import logging
 import os
+import re
 import base64
 from datetime import datetime
 from io import BytesIO
@@ -136,6 +137,7 @@ def text_to_speech(
         for chunk in audio_data:
             f.write(chunk)
 
+    logger.info("text_to_speech: voice=%s output=%s", chosen_voice_id, output_file_name)
     return TextContent(
         type="text",
         text=f"Success. File saved as: {output_path / output_file_name}. Voice used: {voice.name if voice else DEFAULT_VOICE_ID}",
@@ -229,6 +231,7 @@ def text_to_sound_effects(
         for chunk in audio_data:
             f.write(chunk)
 
+    logger.info("text_to_sound_effects: output=%s", output_file_name)
     return TextContent(
         type="text",
         text=f"Success. File saved as: {output_path / output_file_name}",
@@ -296,6 +299,7 @@ def voice_clone(
     finally:
         for f in input_files:
             f.close()
+    logger.info("voice_clone: name=%s voice_id=%s", name, response.voice_id)
     return TextContent(
         type="text",
         text=f"Voice cloned successfully: ID: {response.voice_id}",
@@ -324,6 +328,7 @@ def isolate_audio(
         for chunk in audio_data:
             f.write(chunk)
 
+    logger.info("isolate_audio: output=%s", output_file_name)
     return TextContent(
         type="text",
         text=f"Success. File saved as: {output_path / output_file_name}",
@@ -444,6 +449,7 @@ def add_knowledge_base_to_agent(
     if len(provided_params) > 1:
         make_error("Must provide exactly one of: URL, file, or text")
 
+    file = None
     if text is not None:
         text_bytes = text.encode("utf-8")
         text_io = BytesIO(text_bytes)
@@ -454,26 +460,30 @@ def add_knowledge_base_to_agent(
         path = handle_input_file(file_path=input_file_path, audio_content_check=False)
         file = open(path, "rb")
 
-    response = _get_client().conversational_ai.add_to_knowledge_base(
-        name=knowledge_base_name,
-        url=url,
-        file=file,
-    )
-    agent = _get_client().conversational_ai.agents.get(agent_id)
-    agent.conversation_config.agent.prompt.knowledge_base.append(
-        KnowledgeBaseLocator(
-            type="file" if file else "url",
+    try:
+        response = _get_client().conversational_ai.add_to_knowledge_base(
             name=knowledge_base_name,
-            id=response.id,
+            url=url,
+            file=file,
         )
-    )
-    _get_client().conversational_ai.agents.update(
-        agent_id, conversation_config=agent.conversation_config
-    )
-    return TextContent(
-        type="text",
-        text=f"""Knowledge base created with ID: {response.id} and added to agent {agent_id} successfully.""",
-    )
+        agent = _get_client().conversational_ai.agents.get(agent_id)
+        agent.conversation_config.agent.prompt.knowledge_base.append(
+            KnowledgeBaseLocator(
+                type="file" if file else "url",
+                name=knowledge_base_name,
+                id=response.id,
+            )
+        )
+        _get_client().conversational_ai.agents.update(
+            agent_id, conversation_config=agent.conversation_config
+        )
+        return TextContent(
+            type="text",
+            text=f"""Knowledge base created with ID: {response.id} and added to agent {agent_id} successfully.""",
+        )
+    finally:
+        if input_file_path is not None and file is not None:
+            file.close()
 
 
 @mcp.tool(description="List all available conversational AI agents")
@@ -555,6 +565,7 @@ def speech_to_speech(
         for chunk in audio_data:
             f.write(chunk)
 
+    logger.info("speech_to_speech: output=%s", output_file_name)
     return TextContent(
         type="text", text=f"Success. File saved as: {output_path / output_file_name}"
     )
@@ -648,12 +659,16 @@ def make_outbound_call(
     agent_phone_number_id: str,
     to_number: str,
 ) -> TextContent:
+    if not re.match(r'^\+[1-9]\d{1,14}$', to_number):
+        make_error("to_number must be in E.164 format (e.g. +1xxxxxxxxxx)")
+
     response = _get_client().conversational_ai.twilio.outbound_call(
         agent_id=agent_id,
         agent_phone_number_id=agent_phone_number_id,
         to_number=to_number,
     )
 
+    logger.info("make_outbound_call: agent=%s to=%s***", agent_id, to_number[:5])
     return TextContent(type="text", text=f"Outbound call initiated: {response}.")
 
 
@@ -760,7 +775,8 @@ def list_phone_numbers() -> TextContent:
 @mcp.tool(description="Play an audio file. Supports WAV and MP3 formats.")
 def play_audio(input_file_path: str) -> TextContent:
     file_path = handle_input_file(input_file_path)
-    play(open(file_path, "rb").read(), use_ffmpeg=False)
+    with open(file_path, "rb") as f:
+        play(f.read(), use_ffmpeg=False)
     return TextContent(type="text", text=f"Successfully played audio file: {file_path}")
 
 
