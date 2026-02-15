@@ -167,39 +167,50 @@ _MODIFYING_HANDLERS = {
     "set_device_parameters_batch": lambda song, p, ctrl: handlers.devices.set_device_parameters_batch(
         song, p.get("track_index", 0), p.get("device_index", 0),
         p.get("parameters", []), p.get("track_type", "track"), ctrl),
-    "delete_device": lambda song, p, ctrl: handlers.devices.delete_device(song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+    "delete_device": lambda song, p, ctrl: handlers.devices.delete_device(
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "set_macro_value": lambda song, p, ctrl: handlers.devices.set_macro_value(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("macro_index", 0), p.get("value", 0.0), ctrl),
+        p.get("macro_index", 0), p.get("value", 0.0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "set_drum_pad": lambda song, p, ctrl: handlers.devices.set_drum_pad(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("note", 36), p.get("mute"), p.get("solo"), ctrl),
+        p.get("note", 36), p.get("mute"), p.get("solo"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "copy_drum_pad": lambda song, p, ctrl: handlers.devices.copy_drum_pad(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("source_note", 36), p.get("dest_note", 37), ctrl),
+        p.get("source_note", 36), p.get("dest_note", 37),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "rack_variation_action": lambda song, p, ctrl: handlers.devices.rack_variation_action(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("action", "recall"), p.get("variation_index"), ctrl),
+        p.get("action", "recall"), p.get("variation_index"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "sliced_simpler_to_drum_rack": lambda song, p, ctrl: handlers.devices.sliced_simpler_to_drum_rack(
-        song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "set_compressor_sidechain": lambda song, p, ctrl: handlers.devices.set_compressor_sidechain(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("input_type"), p.get("input_channel"), ctrl),
+        p.get("input_type"), p.get("input_channel"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "set_eq8_properties": lambda song, p, ctrl: handlers.devices.set_eq8_properties(
         song, p.get("track_index", 0), p.get("device_index", 0),
         p.get("edit_mode"), p.get("global_mode"),
-        p.get("oversample"), p.get("selected_band"), ctrl),
+        p.get("oversample"), p.get("selected_band"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "set_hybrid_reverb_ir": lambda song, p, ctrl: handlers.devices.set_hybrid_reverb_ir(
         song, p.get("track_index", 0), p.get("device_index", 0),
         p.get("ir_category_index"), p.get("ir_file_index"),
         p.get("ir_attack_time"), p.get("ir_decay_time"),
-        p.get("ir_size_factor"), p.get("ir_time_shaping_on"), ctrl),
+        p.get("ir_size_factor"), p.get("ir_time_shaping_on"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "set_transmute_properties": lambda song, p, ctrl: handlers.devices.set_transmute_properties(
         song, p.get("track_index", 0), p.get("device_index", 0),
         p.get("frequency_dial_mode_index"), p.get("pitch_mode_index"),
         p.get("mod_mode_index"), p.get("mono_poly_index"),
         p.get("midi_gate_index"), p.get("polyphony"),
-        p.get("pitch_bend_range"), ctrl),
+        p.get("pitch_bend_range"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "set_simpler_properties": lambda song, p, ctrl: handlers.devices.set_simpler_properties(
         song, p.get("track_index", 0), p.get("device_index", 0),
         p.get("playback_mode"), p.get("voices"), p.get("retrigger"),
@@ -213,13 +224,16 @@ _MODIFYING_HANDLERS = {
         p.get("beats_transient_loop_mode"),
         p.get("complex_pro_formants"), p.get("complex_pro_envelope"),
         p.get("texture_grain_size"), p.get("texture_flux"),
-        p.get("tones_grain_size"), ctrl),
+        p.get("tones_grain_size"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "simpler_sample_action": lambda song, p, ctrl: handlers.devices.simpler_sample_action(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("action", "reverse"), p.get("beats"), ctrl),
+        p.get("action", "reverse"), p.get("beats"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "manage_sample_slices": lambda song, p, ctrl: handlers.devices.manage_sample_slices(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("action", "insert"), p.get("slice_time"), p.get("new_time"), ctrl),
+        p.get("action", "insert"), p.get("slice_time"), p.get("new_time"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
 
     # --- Browser ---
     "load_browser_item": lambda song, p, ctrl: handlers.browser.load_browser_item(song, p.get("track_index", 0), p.get("item_uri", ""), ctrl),
@@ -281,7 +295,8 @@ _MODIFYING_HANDLERS = {
     # --- Looper ---
     "control_looper": lambda song, p, ctrl: handlers.devices.control_looper(
         song, p.get("track_index", 0), p.get("device_index", 0),
-        p.get("action", "play"), p.get("clip_slot_index"), ctrl),
+        p.get("action", "play"), p.get("clip_slot_index"),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
 }
 
 _READONLY_HANDLERS = {
@@ -321,19 +336,30 @@ _READONLY_HANDLERS = {
     "get_device_parameters": lambda song, p, ctrl: handlers.devices.get_device_parameters(
         song, p.get("track_index", 0), p.get("device_index", 0),
         p.get("track_type", "track"), ctrl),
-    "get_macro_values": lambda song, p, ctrl: handlers.devices.get_macro_values(song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
-    "get_drum_pads": lambda song, p, ctrl: handlers.devices.get_drum_pads(song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
-    "get_rack_variations": lambda song, p, ctrl: handlers.devices.get_rack_variations(song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+    "get_macro_values": lambda song, p, ctrl: handlers.devices.get_macro_values(
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
+    "get_drum_pads": lambda song, p, ctrl: handlers.devices.get_drum_pads(
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
+    "get_rack_variations": lambda song, p, ctrl: handlers.devices.get_rack_variations(
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "get_compressor_sidechain": lambda song, p, ctrl: handlers.devices.get_compressor_sidechain(
-        song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "get_eq8_properties": lambda song, p, ctrl: handlers.devices.get_eq8_properties(
-        song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "get_hybrid_reverb_ir": lambda song, p, ctrl: handlers.devices.get_hybrid_reverb_ir(
-        song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "get_transmute_properties": lambda song, p, ctrl: handlers.devices.get_transmute_properties(
-        song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
     "get_simpler_properties": lambda song, p, ctrl: handlers.devices.get_simpler_properties(
-        song, p.get("track_index", 0), p.get("device_index", 0), ctrl),
+        song, p.get("track_index", 0), p.get("device_index", 0),
+        track_type=p.get("track_type", "track"), ctrl=ctrl),
 
     # --- Browser ---
     "get_browser_item": lambda song, p, ctrl: handlers.browser.get_browser_item(song, p.get("uri"), p.get("path"), ctrl),

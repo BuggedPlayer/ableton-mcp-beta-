@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -29,9 +30,9 @@ def is_file_writeable(path: Path) -> bool:
 def make_output_file(
     tool: str, text: str, output_path: Path, extension: str, full_id: bool = False
 ) -> Path:
-    id_raw = text if full_id else text[:5]
-    # Strip everything except alphanumerics, hyphens, underscores
-    id_safe = re.sub(r'[^a-zA-Z0-9_\-]', '_', id_raw)
+    # Use a short hash of the input text instead of raw content to avoid
+    # leaking user-provided text into filenames and logs.
+    id_safe = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:8]
     if not id_safe:
         id_safe = "unnamed"
     output_file_name = "{0}_{1}_{2}.{3}".format(

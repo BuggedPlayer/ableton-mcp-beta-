@@ -11,6 +11,7 @@ Each tool that makes an API call is marked with a cost warning. Please follow th
 Tools without cost warnings in their description are free to use as they only read existing data.
 """
 
+import functools
 import httpx
 import logging
 import os
@@ -29,6 +30,7 @@ from mcp.types import TextContent
 from elevenlabs.client import ElevenLabs
 from elevenlabs_mcp.model import McpVoice
 from elevenlabs_mcp.utils import (
+    ElevenLabsMcpError,
     make_error,
     make_output_path,
     make_output_file,
@@ -64,7 +66,7 @@ def _get_client():
     if _client is None:
         api_key = os.getenv("ELEVENLABS_API_KEY")
         if not api_key:
-            raise ValueError(
+            make_error(
                 "ELEVENLABS_API_KEY environment variable is required. "
                 "Set it in your .env file or system environment."
             )
@@ -77,6 +79,29 @@ def _get_client():
         _client = ElevenLabs(api_key=api_key, httpx_client=custom)
     return _client
 
+
+def _safe_api(fn):
+    """Decorator that catches raw ElevenLabs/httpx exceptions and re-raises
+    them as ``ElevenLabsMcpError`` with actionable context, preventing internal
+    stack traces from leaking to the client.  Intentional ``ElevenLabsMcpError``
+    raises (via ``make_error()``) pass through unchanged."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ElevenLabsMcpError:
+            raise  # intentional validation / business errors — pass through
+        except httpx.TimeoutException:
+            make_error("ElevenLabs API request timed out — please try again")
+        except httpx.HTTPStatusError as exc:
+            make_error("ElevenLabs API error (HTTP {0}): {1}".format(
+                exc.response.status_code, exc.response.text[:200]))
+        except Exception as exc:
+            logger.exception("Unexpected error in %s", fn.__name__)
+            make_error("ElevenLabs API call failed: {0}".format(str(exc)[:200]))
+    return wrapper
+
+
 mcp = FastMCP("ElevenLabs")
 
 
@@ -88,6 +113,7 @@ mcp = FastMCP("ElevenLabs")
     ⚠️ COST WARNING: This tool makes an API call to ElevenLabs which may incur costs.
     """
 )
+@_safe_api
 def text_to_speech(
     text: str,
     voice_name: str = None,
@@ -136,7 +162,7 @@ def text_to_speech(
         for chunk in audio_data:
             f.write(chunk)
 
-    logger.info("text_to_speech: voice=%s output=%s", chosen_voice_id, output_file)
+    logger.info("text_to_speech: voice=%s chars=%d", chosen_voice_id, len(text))
     return TextContent(
         type="text",
         text=f"Success. File saved as: {output_file}. Voice used: {voice.name if voice else DEFAULT_VOICE_ID}",
@@ -161,6 +187,7 @@ def text_to_speech(
         TextContent containing the transcription. If save_transcript_to_file is True, the transcription will be saved to a file in the output directory.
     """
 )
+@_safe_api
 def speech_to_text(
     input_file_path: str,
     language_code: str = "eng",
@@ -213,6 +240,7 @@ def speech_to_text(
             Defaults to $HOME/Desktop if not provided.
     """
 )
+@_safe_api
 def text_to_sound_effects(
     text: str, duration_seconds: float = 2.0, output_directory: str = DEFAULT_OUTPUT_DIR
 ) -> TextContent:
@@ -230,7 +258,7 @@ def text_to_sound_effects(
         for chunk in audio_data:
             f.write(chunk)
 
-    logger.info("text_to_sound_effects: output=%s", output_file)
+    logger.info("text_to_sound_effects: duration=%.1fs", duration_seconds)
     return TextContent(
         type="text",
         text=f"Success. File saved as: {output_file}",
@@ -251,6 +279,7 @@ def text_to_sound_effects(
         List of voices that match the search criteria.
     """
 )
+@_safe_api
 def search_voices(
     search: str = None,
     sort: Literal["created_at_unix", "name"] = "name",
@@ -266,6 +295,7 @@ def search_voices(
 
 
 @mcp.tool(description="Get details of a specific voice")
+@_safe_api
 def get_voice(voice_id: str) -> McpVoice:
     """Get details of a specific voice."""
     response = _get_client().voices.get(voice_id=voice_id)
@@ -285,6 +315,7 @@ def get_voice(voice_id: str) -> McpVoice:
     ⚠️ COST WARNING: This tool makes an API call to ElevenLabs which may incur costs. Only use when explicitly requested by the user.
     """
 )
+@_safe_api
 def voice_clone(
     name: str, files: list[str], description: str = None
 ) -> TextContent:
@@ -317,6 +348,7 @@ def voice_clone(
     ⚠️ COST WARNING: This tool makes an API call to ElevenLabs which may incur costs. Only use when explicitly requested by the user.
     """
 )
+@_safe_api
 def isolate_audio(
     input_file_path: str, output_directory: str = None
 ) -> TextContent:
@@ -342,9 +374,22 @@ def isolate_audio(
 @mcp.tool(
     description="Check the current subscription status. Could be used to measure the usage of the API."
 )
+@_safe_api
 def check_subscription() -> TextContent:
     subscription = _get_client().user.subscription.get()
-    return TextContent(type="text", text=f"{subscription.model_dump_json(indent=2)}")
+    # Return only usage-relevant fields — exclude billing/account metadata
+    import json
+    safe_fields = {
+        "tier": getattr(subscription, "tier", None),
+        "character_count": getattr(subscription, "character_count", None),
+        "character_limit": getattr(subscription, "character_limit", None),
+        "voice_limit": getattr(subscription, "voice_limit", None),
+        "can_extend_character_limit": getattr(subscription, "can_extend_character_limit", None),
+        "status": getattr(subscription, "status", None),
+        "next_character_count_reset_unix": getattr(subscription, "next_character_count_reset_unix", None),
+    }
+    return TextContent(type="text", text=json.dumps(
+        {k: v for k, v in safe_fields.items() if v is not None}, indent=2))
 
 
 @mcp.tool(
@@ -372,6 +417,7 @@ def check_subscription() -> TextContent:
         retention_days: Number of days to retain the agent's data.
     """
 )
+@_safe_api
 def create_agent(
     name: str,
     first_message: str,
@@ -438,6 +484,7 @@ def create_agent(
         text: Text to add to the knowledge base.
     """
 )
+@_safe_api
 def add_knowledge_base_to_agent(
     agent_id: str,
     knowledge_base_name: str,
@@ -528,6 +575,7 @@ def add_knowledge_base_to_agent(
 
 
 @mcp.tool(description="List all available conversational AI agents")
+@_safe_api
 def list_agents() -> TextContent:
     """List all available conversational AI agents.
 
@@ -547,6 +595,7 @@ def list_agents() -> TextContent:
 
 
 @mcp.tool(description="Get details about a specific conversational AI agent")
+@_safe_api
 def get_agent(agent_id: str) -> TextContent:
     """Get details about a specific conversational AI agent.
 
@@ -583,6 +632,7 @@ def get_agent(agent_id: str) -> TextContent:
     ⚠️ COST WARNING: This tool makes an API call to ElevenLabs which may incur costs. Only use when explicitly requested by the user.
     """
 )
+@_safe_api
 def speech_to_speech(
     input_file_path: str,
     voice_name: str = "Adam",
@@ -631,6 +681,7 @@ def speech_to_speech(
     ⚠️ COST WARNING: This tool makes an API call to ElevenLabs which may incur costs. Only use when explicitly requested by the user.
     """
 )
+@_safe_api
 def text_to_voice(
     voice_description: str,
     text: str = None,
@@ -673,6 +724,7 @@ def text_to_voice(
     ⚠️ COST WARNING: This tool makes an API call to ElevenLabs which may incur costs. Only use when explicitly requested by the user.
     """
 )
+@_safe_api
 def create_voice_from_preview(
     generated_voice_id: str,
     voice_name: str,
@@ -704,6 +756,7 @@ def create_voice_from_preview(
         TextContent containing information about the call
     """
 )
+@_safe_api
 def make_outbound_call(
     agent_id: str,
     agent_phone_number_id: str,
@@ -734,11 +787,16 @@ def make_outbound_call(
         TextContent containing information about the shared voices
     """
 )
+@_safe_api
 def search_voice_library(
     page: int = 0,
     page_size: int = 10,
     search: str = None,
 ) -> TextContent:
+    if page < 0:
+        make_error("page must be >= 0")
+    if page_size < 1 or page_size > 100:
+        make_error("page_size must be between 1 and 100")
     response = _get_client().voices.get_shared(
         page=page,
         page_size=page_size,
@@ -793,6 +851,7 @@ def search_voice_library(
 
 
 @mcp.tool(description="List all phone numbers associated with the ElevenLabs account")
+@_safe_api
 def list_phone_numbers() -> TextContent:
     """List all phone numbers associated with the ElevenLabs account.
 
@@ -823,6 +882,7 @@ def list_phone_numbers() -> TextContent:
 
 
 @mcp.tool(description="Play an audio file. Supports WAV and MP3 formats.")
+@_safe_api
 def play_audio(input_file_path: str) -> TextContent:
     file_path = handle_input_file(input_file_path)
     with open(file_path, "rb") as f:

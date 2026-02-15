@@ -61,8 +61,18 @@ Internal hardening sweep across Remote Script, ElevenLabs MCP, and documentation
 
 - **fix**: `group_tracks` — raises `NotImplementedError` with guidance instead of returning silent `grouped: False`. Moved raise outside try/except to eliminate double-logging.
 
+#### Remote Script: Dispatch Table
+
+- **fix**: `__init__.py` dispatch table — `delete_device`, `set_macro_value`, and 19 other device handler dispatch entries were passing `ctrl` positionally into the `track_type` parameter slot, breaking return/master track support and dropping controller logging. All 21 entries now use explicit `track_type=p.get("track_type", "track"), ctrl=ctrl` keyword arguments to prevent future signature drift.
+
 #### ElevenLabs MCP: Security
 
+- **fix**: `utils.py` `make_output_file` — filenames now use an 8-character SHA-256 hash of user input instead of raw `text[:5]`, preventing user-provided text from leaking into filenames and logs.
+- **fix**: `server.py` `text_to_speech` / `text_to_sound_effects` — log lines no longer include output filenames (which contained user text snippets); replaced with safe metadata (`chars=`, `duration=`).
+- **fix**: `server.py` `check_subscription` — no longer returns raw `model_dump_json()` which could expose billing/account metadata; returns only usage-relevant fields (tier, character count/limit, voice limit, status, reset time).
+- **fix**: `server.py` `_get_client` — missing API key now raises `ElevenLabsMcpError` (via `make_error()`) instead of raw `ValueError`, consistent with all other validation paths.
+- **fix**: `server.py` — all 19 tool functions wrapped with `@_safe_api` decorator that catches `httpx.TimeoutException`, `httpx.HTTPStatusError`, and generic exceptions, re-raising them as `ElevenLabsMcpError` with actionable context. Prevents raw stack traces from leaking to MCP clients.
+- **fix**: `server.py` `search_voice_library` — `page` and `page_size` validated before forwarding to API (`page >= 0`, `1 <= page_size <= 100`).
 - **fix**: `__main__.py` — `--print` output now redacts API keys/secrets/tokens via `_redact_config()` deep-copy.
 - **fix**: `__main__.py` — config merge loads existing JSON and merges only the ElevenLabs server entry (was clobbering entire config).
 - **fix**: `__main__.py` — `get_claude_config_path()` now returns the platform-specific path even if directory doesn't exist (first-time users). Caller creates it via `mkdir(parents=True)`.
